@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Feedback Checker",
+  "version": "2.3.2",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsyS1TPyBmTfC6dkPzZlb0yiAbWfZ9yuK/1wCKfBM6Atve/apzjy9YDgsuyzYgzhVSnv2DakKcI+H8Mw+Pbaav8L1MLY3h66MmagliMZmWIpKMETYQG+DydWHQD3ANglgFiKxL3UAQ/saJxprcTdf/EwbvDiZpBnPCuMhq8ZM5CJxD9jS2W4QKKB1ZVvuMxJa8Eb9ARpQAKvuMzg4J7X4eyYhz4JAy3ftctFjPZ/mk0knvpAt4tfGWQd8gfmz7JpJ5r7e0w9yDUWM8E/iJxJP8Ea8a5x7iVuWUP1w7A6rf6z7bOiwC/unjHFW5gbh2U3LsJqOzTgytuj0Y8A85l1S0wIDAQAB",
+  "description": "Проверяет одобренные фидбеки на Wildberries, делает скриншоты и сохраняет их на Google Drive.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "identity",
+    "storage",
+    "webRequest"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Feedback Checker"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "*://*.wildberries.ru/*",
+    "https://www.googleapis.com/*",
+    "https://accounts.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.wildberries.ru/*"],
+      "js": ["deduplication-cache.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["html2canvas.min.js"],
+      "matches": ["*://*.wildberries.ru/*"]
+    }
+  ],
+  "chrome_url_overrides": {}
+}

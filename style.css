@@ -1,0 +1,19 @@
+.popup-container {
+  width: 220px;
+  text-align: center;
+  font-family: Arial, sans-serif;
+}
+
+#startBtn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #4caf50;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#startBtn:hover {
+  background: #45a049;
+}

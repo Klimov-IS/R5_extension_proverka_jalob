@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feedback Checker - Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f5f7fa;
+      color: #333;
+      overflow-x: hidden;
+    }
+
+    /* ============================================ */
+    /* HEADER */
+    /* ============================================ */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 30px;
+      z-index: 1000;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .user-email {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.2);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .logout-btn {
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 8px;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 0.35);
+      transform: translateY(-1px);
+    }
+
+    /* ============================================ */
+    /* MAIN CONTAINER */
+    /* ============================================ */
+    .container {
+      margin-top: 60px;
+      height: calc(100vh - 60px);
+      overflow-y: auto;
+    }
+
+    /* ============================================ */
+    /* MAIN PANEL (FULL WIDTH) */
+    /* ============================================ */
+    .main-panel {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #f5f7fa;
+      padding: 30px 40px;
+    }
+
+    /* ============================================ */
+    /* CABINET DROPDOWN */
+    /* ============================================ */
+    .cabinet-dropdown-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .cabinet-search-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #f9fafb;
+      color: #333;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      cursor: text;
+    }
+
+    .cabinet-search-input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #ffffff;
+      box-shadow: 0 0 8px rgba(102, 126, 234, 0.2);
+    }
+
+    .cabinet-search-input.has-selection {
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+      border-color: #667eea;
+    }
+
+    .cabinet-dropdown {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      background: #ffffff;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+      max-height: 300px;
+      overflow-y: auto;
+      z-index: 1000;
+      display: none;
+    }
+
+    .cabinet-dropdown.show {
+      display: block;
+    }
+
+    .cabinet-dropdown-item {
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 14px;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .cabinet-dropdown-item:last-child {
+      border-bottom: none;
+    }
+
+    .cabinet-dropdown-item:hover {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .cabinet-dropdown-item.selected {
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+      font-weight: 600;
+    }
+
+    .cabinet-dropdown-item.loading,
+    .cabinet-dropdown-item.no-results {
+      color: #999;
+      font-style: italic;
+      cursor: default;
+      justify-content: center;
+    }
+
+    .cabinet-dropdown-item.loading:hover,
+    .cabinet-dropdown-item.no-results:hover {
+      background: transparent;
+      color: #999;
+    }
+
+    .cabinet-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cabinet-count {
+      margin-left: 20px;
+      font-size: 13px;
+      color: #666;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .cabinet-dropdown-item:hover .cabinet-count {
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    /* Custom scrollbar for dropdown */
+    .cabinet-dropdown::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .cabinet-dropdown::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+
+    .cabinet-dropdown::-webkit-scrollbar-thumb {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 4px;
+    }
+
+    .panel-section {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .panel-section h3 {
+      font-size: 15px;
+      color: #333;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      background: #f9fafb;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #ffffff;
+      box-shadow: 0 0 8px rgba(102, 126, 234, 0.2);
+    }
+
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .radio-label {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      color: #555;
+      cursor: pointer;
+    }
+
+    .radio-label input {
+      margin-right: 8px;
+      accent-color: #667eea;
+      cursor: pointer;
+    }
+
+    .articul-checkboxes {
+      background: #f9fafb;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .articul-search {
+      width: calc(100% - 24px);
+      padding: 8px 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .articul-search:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 6px rgba(102, 126, 234, 0.3);
+    }
+
+    .articul-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .articul-controls button {
+      flex: 1;
+      padding: 6px;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-select-all {
+      background: linear-gradient(135deg, #4caf50, #43a047);
+    }
+
+    .btn-deselect-all {
+      background: linear-gradient(135deg, #f44336, #e53935);
+    }
+
+    .btn-invert {
+      background: linear-gradient(135deg, #2196F3, #1976D2);
+    }
+
+    .articul-counter {
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+      padding: 6px;
+      background: #e8f5e9;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      color: #333;
+      margin-bottom: 5px;
+      cursor: pointer;
+    }
+
+    .checkbox-label input {
+      margin-right: 8px;
+      accent-color: #667eea;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #4caf50, #43a047);
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #45a049, #3e8e41);
+      box-shadow: 0 6px 12px rgba(76, 175, 80, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .error-message {
+      display: none;
+      background: #ffebee;
+      color: #c62828;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 15px;
+    }
+
+    .success-message {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    /* ============================================ */
+    /* STATS PANEL (BOTTOM, EXPANDABLE) */
+    /* ============================================ */
+    .stats-panel {
+      position: fixed;
+      bottom: -500px;
+      left: 0;
+      right: 0;
+      background: #ffffff;
+      border-top: 2px solid #e0e0e0;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+      transition: bottom 0.3s ease;
+      z-index: 999;
+    }
+
+    .stats-panel.visible {
+      bottom: 0;
+    }
+
+    .stats-header {
+      padding: 12px 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e9ebee 100%);
+    }
+
+    .stats-header h3 {
+      font-size: 14px;
+      color: #333;
+      font-weight: 600;
+    }
+
+    .stats-toggle {
+      font-size: 18px;
+      color: #667eea;
+      transition: transform 0.3s ease;
+    }
+
+    .stats-panel.expanded .stats-toggle {
+      transform: rotate(180deg);
+    }
+
+    .stats-content {
+      padding: 20px 30px;
+      display: none;
+    }
+
+    .stats-panel.expanded .stats-content {
+      display: block;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .stat-item {
+      background: linear-gradient(135deg, #f8f9fa 0%, #e9ebee 100%);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      color: #333;
+      font-weight: 700;
+    }
+
+    .progress-bar-container {
+      background: #e0e0e0;
+      border-radius: 10px;
+      height: 20px;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .btn-stop {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f44336, #e53935);
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-stop:hover {
+      background: linear-gradient(135deg, #e53935, #d32f2f);
+      transform: translateY(-1px);
+    }
+
+    /* ============================================ */
+    /* SCROLLBAR */
+    /* ============================================ */
+    .sidebar::-webkit-scrollbar,
+    .main-panel::-webkit-scrollbar,
+    .articul-checkboxes::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .sidebar::-webkit-scrollbar-track,
+    .main-panel::-webkit-scrollbar-track,
+    .articul-checkboxes::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb,
+    .main-panel::-webkit-scrollbar-thumb,
+    .articul-checkboxes::-webkit-scrollbar-thumb {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">📊 Feedback Checker</div>
+    </div>
+    <div class="header-right">
+      <div class="user-email" id="userEmail">Загрузка...</div>
+      <button class="logout-btn" id="logoutBtn">Выйти</button>
+    </div>
+  </div>
+
+  <!-- MAIN CONTAINER -->
+  <div class="container">
+    <!-- MAIN PANEL -->
+    <div class="main-panel">
+      <!-- Cabinet Selection -->
+      <div class="panel-section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <h3 style="margin-bottom: 0;">Выбор кабинета</h3>
+          <button class="logout-btn" id="refreshCabinetsBtn" style="padding: 6px 12px; font-size: 12px;">
+            🔄 Обновить
+          </button>
+        </div>
+        <div class="form-group">
+          <div class="cabinet-dropdown-wrapper">
+            <input
+              type="text"
+              class="cabinet-search-input"
+              id="cabinetSearchInput"
+              placeholder="🔍 Поиск кабинета..."
+              autocomplete="off">
+            <div class="cabinet-dropdown" id="cabinetDropdown">
+              <div class="cabinet-dropdown-item loading">⏳ Загрузка кабинетов...</div>
+            </div>
+          </div>
+          <input type="hidden" id="selectedCabinetIndex" value="">
+        </div>
+      </div>
+
+      <!-- Date Range -->
+      <div class="panel-section">
+        <h3>Диапазон дат</h3>
+        <div class="form-group">
+          <label class="form-label">С какого (дд.мм)</label>
+          <input type="text" class="form-input" id="startDate" placeholder="01.09">
+        </div>
+        <div class="form-group">
+          <label class="form-label">По какое (дд.мм)</label>
+          <input type="text" class="form-input" id="endDate" placeholder="30.09">
+        </div>
+      </div>
+
+      <!-- Articul Selection -->
+      <div class="panel-section" id="articulSection" style="display: none;">
+        <h3>Выбор артикулов</h3>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="articulMode" value="all" checked>
+            Все артикулы кабинета
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="articulMode" value="manual">
+            Выбрать вручную
+          </label>
+        </div>
+
+        <div id="articulManualContainer" style="display: none; margin-top: 15px;">
+          <input type="text" class="articul-search" id="articulSearch" placeholder="🔍 Поиск по артикулу...">
+
+          <div class="articul-controls">
+            <button class="btn-select-all" id="selectAllBtn">✅ Все</button>
+            <button class="btn-deselect-all" id="deselectAllBtn">❌ Снять</button>
+            <button class="btn-invert" id="invertBtn">🔄 Инверт</button>
+          </div>
+
+          <div class="articul-counter" id="articulCounter">Выбрано: <strong>0</strong> из <strong>0</strong></div>
+
+          <div class="articul-checkboxes" id="articulCheckboxes"></div>
+        </div>
+      </div>
+
+      <!-- Screenshot Mode -->
+      <div class="panel-section" id="screenshotSection" style="display: none;">
+        <h3>Сохранение скриншотов</h3>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="screenshotMode" value="byArticul">
+            📁 По папкам (каждый артикул в своей папке)
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="screenshotMode" value="allInOne" checked>
+            📦 Все в одну папку "Скриншоты жалобы"
+          </label>
+        </div>
+      </div>
+
+      <!-- Error Message -->
+      <div class="error-message" id="errorMessage"></div>
+
+      <!-- Start Button -->
+      <button class="btn-primary" id="startBtn">Запустить проверку</button>
+    </div>
+  </div>
+
+  <!-- STATS PANEL -->
+  <div class="stats-panel" id="statsPanel">
+    <div class="stats-header" id="statsHeader">
+      <h3>📈 Статистика проверки</h3>
+      <span class="stats-toggle">▲</span>
+    </div>
+    <div class="stats-content">
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-label">Проверено</div>
+          <div class="stat-value" id="statChecked">0</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Одобрено</div>
+          <div class="stat-value" id="statApproved">0</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Отклонено</div>
+          <div class="stat-value" id="statRejected">0</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Скриншотов</div>
+          <div class="stat-value" id="statScreenshots">0</div>
+        </div>
+      </div>
+
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar" style="width: 0%;">0%</div>
+      </div>
+
+      <button class="btn-stop" id="stopBtn">⏹ Остановить проверку</button>
+    </div>
+  </div>
+
+  <script src="deduplication-cache.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

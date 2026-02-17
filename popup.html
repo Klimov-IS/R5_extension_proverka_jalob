@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Feedback Checker</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", Roboto, "Inter", sans-serif;
+        background: linear-gradient(145deg, #f3f4f6, #e9ebee);
+        width: 340px;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .popup-container {
+        width: 100%;
+        padding: 30px 25px;
+        background: #ffffff;
+        text-align: center;
+      }
+
+      h2 {
+        font-size: 20px;
+        margin: 0 0 15px 0;
+        color: #333;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 700;
+      }
+
+      #status {
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        font-size: 13px;
+        text-align: center;
+      }
+
+      #authBtn {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #2196F3, #1976D2);
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 4px 10px rgba(33, 150, 243, 0.3);
+        transition: all 0.25s ease;
+      }
+
+      #authBtn:hover {
+        background: linear-gradient(135deg, #1976D2, #1565C0);
+        box-shadow: 0 6px 14px rgba(33, 150, 243, 0.4);
+        transform: translateY(-1px);
+      }
+
+      #authBtn:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 5px rgba(33, 150, 243, 0.3);
+      }
+
+      #authBtn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="popup-container">
+      <h2>Feedback Checker</h2>
+      <div id="status">⏳ Проверка авторизации...</div>
+      <button id="authBtn" style="display: none;">🔐 Войти в Google Drive</button>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

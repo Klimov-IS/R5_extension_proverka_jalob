@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(node:*)",
+      "Bash(dir)",
+      "Bash(dir:*)",
+      "Bash(powershell:*)",
+      "Bash(findstr:*)",
+      "Bash(move PROJECT_PLAN.md rating5-reporting-system )",
+      "Bash(move GOOGLE_DRIVE_ACCESS.md rating5-reporting-system )",
+      "Bash(move MIGRATION_GUIDE.md rating5-reporting-system )",
+      "Bash(move:*)",
+      "Bash(awk:*)",
+      "Read(//c/Users/79025/Desktop/проекты/WB подача жалоб/WB/**)",
+      "Bash(gh repo view:*)",
+      "Bash(cmd /c \"where gh\")",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

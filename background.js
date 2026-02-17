@@ -1,0 +1,622 @@
+// Импортируем модули Google Drive и Sheets (через importScripts для service worker)
+try {
+  importScripts('secrets.js', 'google-drive-auth.js', 'google-drive-api.js', 'google-sheets-api.js');
+  console.log("✅ Google Drive и Sheets модули загружены");
+} catch (error) {
+  console.error("❌ Ошибка загрузки модулей:", error);
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log("Feedback Checker установлен (v2.0.0 - интеграция с Google Drive)");
+
+  if (details.reason === 'install') {
+    console.log("📋 Первая установка - откройте popup для авторизации в Google Drive");
+  } else if (details.reason === 'update') {
+    console.log("🔄 Расширение обновлено");
+  }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  console.log("🔄 Service Worker запущен");
+});
+
+// Отслеживание API запросов для точного определения загрузки данных
+const complaintsUrlPart = "/reviews-ext-seller-portal/api/v1/feedbacks/complaints";
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    if (details.url.includes(complaintsUrlPart) && details.method === "GET") {
+      sendToTab(details.tabId, "complaintsLoaded", {
+        url: details.url,
+        status: details.statusCode,
+        id: details.requestId,
+      });
+    }
+  },
+  { urls: ["*://*.wildberries.ru/*"] }
+);
+
+function sendToTab(tabId, type, data) {
+  if (!tabId || tabId < 0) return;
+
+  chrome.tabs.sendMessage(tabId, {
+    type,
+    data,
+  }).catch(() => {
+    // Игнорируем ошибки если content script еще не загружен
+  });
+}
+
+// Счетчик скриншотов
+let screenshotStats = { success: 0, failed: 0 };
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Новый метод - сохранение готового изображения от html2canvas
+  if (msg.action === "saveScreenshot") {
+    handleSaveScreenshot(msg)
+      .then(() => {
+        screenshotStats.success++;
+        sendResponse({ success: true });
+      })
+      .catch((err) => {
+        screenshotStats.failed++;
+        console.error("❌ Ошибка сохранения:", err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Асинхронный ответ
+  }
+
+  // Статистика скриншотов
+  if (msg.action === "getScreenshotStats") {
+    sendResponse(screenshotStats);
+    return false;
+  }
+
+  if (msg.action === "resetScreenshotStats") {
+    screenshotStats = { success: 0, failed: 0 };
+    sendResponse({ success: true });
+    return false;
+  }
+
+  // Проверка авторизации Google Drive
+  if (msg.action === "checkDriveAuth") {
+    console.log("📥 [BACKGROUND] Получен запрос checkDriveAuth");
+    googleDriveAuth.isAuthorized()
+      .then((isAuth) => {
+        console.log("📤 [BACKGROUND] Отправляем ответ checkDriveAuth:", { authorized: isAuth });
+        sendResponse({ authorized: isAuth });
+      })
+      .catch((err) => {
+        console.error("❌ [BACKGROUND] Ошибка checkDriveAuth:", err);
+        sendResponse({ authorized: false });
+      });
+    return true;
+  }
+
+  // Авторизация Google Drive
+  if (msg.action === "authorizeDrive") {
+    console.log("📥 [BACKGROUND] Получен запрос authorizeDrive");
+    googleDriveAuth.authorize()
+      .then(() => {
+        console.log("📤 [BACKGROUND] Отправляем ответ authorizeDrive: success");
+        sendResponse({ success: true });
+      })
+      .catch((err) => {
+        console.error("❌ [BACKGROUND] Ошибка authorizeDrive:", err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true;
+  }
+
+  // Создание скриншота через chrome.tabs.captureVisibleTab
+  if (msg.action === "captureScreenshot") {
+    console.log("📥 [BACKGROUND] Получен запрос captureScreenshot");
+
+    // Получаем ID текущей вкладки
+    chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        console.error("❌ [BACKGROUND] Ошибка captureVisibleTab:", chrome.runtime.lastError);
+        sendResponse({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      if (dataUrl) {
+        console.log("✅ [BACKGROUND] Скриншот создан, размер:", dataUrl.length);
+        sendResponse({ success: true, dataUrl: dataUrl });
+      } else {
+        console.error("❌ [BACKGROUND] Скриншот не создан");
+        sendResponse({ success: false, error: "Failed to capture screenshot" });
+      }
+    });
+
+    return true; // Асинхронный ответ
+  }
+
+  // Получение email пользователя
+  if (msg.action === "getUserEmail") {
+    console.log("📥 [BACKGROUND] Получен запрос getUserEmail");
+    (async () => {
+      try {
+        const token = await googleDriveAuth.getToken();
+        // Получаем информацию о пользователе через Google API
+        const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (response.ok) {
+          const userInfo = await response.json();
+          console.log("📤 [BACKGROUND] Отправляем email:", userInfo.email);
+          sendResponse({ email: userInfo.email });
+        } else {
+          console.error("❌ [BACKGROUND] Ошибка получения userInfo");
+          sendResponse({ email: null });
+        }
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getUserEmail:", error);
+        sendResponse({ email: null });
+      }
+    })();
+    return true;
+  }
+
+  // Выход из аккаунта
+  if (msg.action === "signOut") {
+    console.log("📥 [BACKGROUND] Получен запрос signOut");
+    googleDriveAuth.signOut()
+      .then(() => {
+        console.log("📤 [BACKGROUND] Выход выполнен успешно");
+        sendResponse({ success: true });
+      })
+      .catch((err) => {
+        console.error("❌ [BACKGROUND] Ошибка signOut:", err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true;
+  }
+
+  // Получение списка кабинетов из Google Sheets
+  if (msg.action === "getCabinets") {
+    console.log("📥 [BACKGROUND] Получен запрос getCabinets");
+    const { spreadsheetId } = msg;
+
+    if (!spreadsheetId) {
+      sendResponse({ success: false, error: "Не указан ID таблицы" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        const token = await googleDriveAuth.getToken();
+        const cabinets = await googleSheetsAPI.getCabinets(token, spreadsheetId);
+        console.log("📤 [BACKGROUND] Отправляем список кабинетов:", cabinets.length);
+        sendResponse({ success: true, cabinets: cabinets });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getCabinets:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true; // Асинхронный ответ
+  }
+
+  // Сохранение отчета в Google Sheets
+  if (msg.action === "saveReport") {
+    console.log("📥 [BACKGROUND] Получен запрос saveReport");
+    const { reportData } = msg;
+
+    if (!reportData || !reportData.reportSheetId) {
+      sendResponse({ success: false, error: "Не указаны данные отчета или ID таблицы" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        const token = await googleDriveAuth.getToken();
+
+        // ========================================
+        // 1. ЛИСТ Report_Log - полная детализация
+        // ========================================
+        const reportLogValues = [
+          reportData.timestamp,
+          reportData.clientName,
+          reportData.clientId,
+          reportData.articulsChecked,
+          reportData.complaintsFound,
+          reportData.screenshotsSaved,
+          reportData.screenshotsSkipped,
+          reportData.dateRangeStart,
+          reportData.dateRangeEnd,
+          reportData.duration,
+          reportData.status,
+          reportData.errorMessage
+        ];
+
+        await googleSheetsAPI.appendRow(token, reportData.reportSheetId, 'Report_Log', reportLogValues);
+        console.log("✅ [BACKGROUND] Данные записаны в Report_Log");
+
+        console.log("✅ [BACKGROUND] Отчет успешно записан в Google Sheets");
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка saveReport:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true; // Асинхронный ответ
+  }
+
+  // Сохранение статистики в Stats_Daily
+  if (msg.action === "saveStatsToSheet") {
+    console.log("📥 [BACKGROUND] Получен запрос saveStatsToSheet");
+    console.log("🔍 [DEBUG] reportSheetId:", msg.reportSheetId);
+    console.log("🔍 [DEBUG] Количество строк:", msg.statsRows?.length);
+    console.log("🔍 [DEBUG] Первая строка:", JSON.stringify(msg.statsRows?.[0], null, 2));
+
+    const { reportSheetId, statsRows } = msg;
+
+    if (!reportSheetId || !statsRows || statsRows.length === 0) {
+      console.error("❌ [BACKGROUND] Валидация не прошла:");
+      console.error("   reportSheetId:", reportSheetId);
+      console.error("   statsRows:", statsRows);
+      sendResponse({ success: false, error: "Не указаны данные статистики или ID таблицы" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        console.log("🔑 [BACKGROUND] Получаем токен авторизации...");
+        const token = await googleDriveAuth.getToken();
+        console.log("✅ [BACKGROUND] Токен получен");
+
+        let insertedCount = 0;
+        let updatedCount = 0;
+
+        console.log(`📊 [BACKGROUND] Обрабатываем ${statsRows.length} строк статистики...`);
+
+        // Обрабатываем каждую строку статистики
+        for (let i = 0; i < statsRows.length; i++) {
+          const row = statsRows[i];
+          console.log(`🔄 [BACKGROUND] Строка ${i + 1}/${statsRows.length}:`, row);
+
+          const result = await googleSheetsAPI.upsertStatsRow(
+            token,
+            reportSheetId,
+            'Stats_Daily',
+            {
+              clientName: row.clientName,
+              article: row.article,
+              complaintDate: row.complaintDate,
+              totalComplaints: row.totalComplaints,
+              approvedComplaints: row.approvedComplaints
+            }
+          );
+
+          console.log(`✅ [BACKGROUND] Результат UPSERT для строки ${i + 1}:`, result);
+
+          if (result.action === 'inserted') {
+            insertedCount++;
+          } else if (result.action === 'updated') {
+            updatedCount++;
+          }
+        }
+
+        console.log(`✅ [BACKGROUND] Статистика обработана: ${insertedCount} новых, ${updatedCount} обновлено`);
+        sendResponse({ success: true, inserted: insertedCount, updated: updatedCount });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка saveStatsToSheet:", error);
+        console.error("❌ [BACKGROUND] Stack trace:", error.stack);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true; // Асинхронный ответ
+  }
+
+  // Получение списка имен файлов из Complaints (для дедупликации)
+  if (msg.action === "getComplaintsFilenames") {
+    console.log("📥 [BACKGROUND] Получен запрос getComplaintsFilenames");
+    const { reportSheetId } = msg;
+
+    if (!reportSheetId) {
+      sendResponse({ success: false, error: "Не указан ID таблицы отчетов" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        const token = await googleDriveAuth.getToken();
+
+        // Читаем колонку J (Имя файла) из листа Complaints
+        console.log(`📊 [BACKGROUND] Читаем колонку J (Имя файла) из Complaints (reportSheetId: ${reportSheetId})`);
+        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, 'Complaints!J:J');
+
+        // Извлекаем имена файлов (пропускаем заголовок)
+        const filenames = rows.length > 1
+          ? rows.slice(1).map(row => row[0]).filter(Boolean)
+          : [];
+
+        console.log(`📤 [BACKGROUND] Отправляем ${filenames.length} имен файлов для дедупликации`);
+        sendResponse({ success: true, filenames: filenames });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getComplaintsFilenames:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true; // Асинхронный ответ
+  }
+});
+
+// ============================================
+// СОХРАНЕНИЕ СКРИНШОТА НА GOOGLE DRIVE
+// ============================================
+async function handleSaveScreenshot(msg) {
+  const {
+    imageData,
+    articul,
+    feedbackDate,
+    feedbackRating,
+    complaintSubmitDate,
+    cabinetFolderId,
+    screenshotMode,
+    cabinetName,
+    complaintId,
+    reportSheetId
+  } = msg;
+
+  if (!imageData) {
+    throw new Error("Нет данных изображения");
+  }
+
+  if (!cabinetFolderId) {
+    throw new Error("Не указан ID папки кабинета");
+  }
+
+  // Парсим дату из feedbackDate
+  const formattedDate = parseDate(feedbackDate);
+  const fileName = `${articul}_${formattedDate}.png`;
+
+  console.log(`📁 Загрузка скриншота: ${fileName} в папку ${cabinetFolderId}`);
+  console.log(`📸 Режим сохранения: ${screenshotMode || 'byArticul'}`);
+
+  // Получаем токен авторизации
+  let token;
+  try {
+    token = await googleDriveAuth.getToken();
+  } catch (authError) {
+    console.error("❌ Ошибка авторизации Google Drive:", authError);
+    throw new Error("Не удалось авторизоваться в Google Drive. Откройте popup и войдите в аккаунт.");
+  }
+
+  // Шаг 1: Создаем/получаем папку "скриншоты: жалобы WB" внутри папки Screenshots
+  const complaintsSubfolderName = "скриншоты: жалобы WB";
+  let complaintsFolderId;
+
+  try {
+    complaintsFolderId = await googleDriveAPI.getOrCreateFolder(token, complaintsSubfolderName, cabinetFolderId);
+    console.log(`📁 Папка "${complaintsSubfolderName}": ${complaintsFolderId}`);
+  } catch (folderError) {
+    console.error(`❌ [BACKGROUND] Ошибка создания папки "${complaintsSubfolderName}":`, folderError);
+
+    // Если ошибка связана с папкой в корзине или несуществующей папкой
+    if (folderError.message.includes('корзине') || folderError.message.includes('не существует')) {
+      console.log(`🗑️ [BACKGROUND] Очищаем кеш для кабинета ${cabinetFolderId}...`);
+      await googleDriveAPI.clearCabinetCache(cabinetFolderId);
+
+      // Повторная попытка после очистки кеша
+      console.log(`🔄 [BACKGROUND] Повторная попытка создания папки...`);
+      complaintsFolderId = await googleDriveAPI.getOrCreateFolder(token, complaintsSubfolderName, cabinetFolderId);
+      console.log(`✅ [BACKGROUND] Папка создана после очистки кеша: ${complaintsFolderId}`);
+    } else {
+      // Другая ошибка - пробрасываем дальше
+      throw folderError;
+    }
+  }
+
+  // Шаг 2: Определяем целевую папку в зависимости от режима
+  let targetFolderId;
+
+  if (screenshotMode === 'allInOne') {
+    // Режим "все в одну папку" - сохраняем напрямую в "скриншоты: жалобы WB"
+    targetFolderId = complaintsFolderId;
+    console.log(`📦 Режим "Все в одну папку": сохраняем в "${complaintsSubfolderName}"`);
+  } else {
+    // Режим "по артикулам" (по умолчанию) - создаем папку для артикула
+    try {
+      targetFolderId = await googleDriveAPI.getOrCreateFolder(token, articul, complaintsFolderId);
+      console.log(`📂 Режим "По папкам": папка артикула ${articul}: ${targetFolderId}`);
+    } catch (articulFolderError) {
+      console.error(`❌ [BACKGROUND] Ошибка создания папки артикула "${articul}":`, articulFolderError);
+
+      // Если ошибка связана с папкой в корзине
+      if (articulFolderError.message.includes('корзине') || articulFolderError.message.includes('не существует')) {
+        console.log(`🗑️ [BACKGROUND] Очищаем кеш папки артикула...`);
+        await googleDriveAPI.removeCachedFolderId(`${complaintsFolderId}/${articul}`);
+
+        // Повторная попытка
+        console.log(`🔄 [BACKGROUND] Повторная попытка создания папки артикула...`);
+        targetFolderId = await googleDriveAPI.getOrCreateFolder(token, articul, complaintsFolderId);
+        console.log(`✅ [BACKGROUND] Папка артикула создана после очистки кеша: ${targetFolderId}`);
+      } else {
+        throw articulFolderError;
+      }
+    }
+  }
+
+  // Проверяем существование файла
+  const fileAlreadyExists = await googleDriveAPI.fileExists(token, targetFolderId, fileName);
+
+  let fileId = null;
+
+  if (fileAlreadyExists) {
+    console.log(`⏭️ Скриншот ${fileName} уже существует на Drive, пропускаем загрузку`);
+    // Используем "existing" как placeholder (файл существует, запись в таблицы все равно будет)
+    fileId = "existing";
+    console.log(`📎 Файл существует, будем записывать в таблицы с placeholder ID`);
+  } else {
+    // Загружаем на Drive с повторными попытками
+    const maxRetries = 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Попытка загрузки ${attempt}/${maxRetries}...`);
+
+        fileId = await googleDriveAPI.uploadFile(
+          token,
+          fileName,
+          imageData,
+          targetFolderId
+        );
+
+        console.log(`✅ Скриншот успешно загружен на Drive! File ID: ${fileId}`);
+        break; // Выходим из цикла попыток при успехе
+      } catch (error) {
+        lastError = error;
+        console.error(`❌ Попытка ${attempt}/${maxRetries} не удалась:`, error.message);
+
+        // Если это ошибка авторизации, обновляем токен
+        if (error.message.includes("401") || error.message.includes("403")) {
+          console.log("🔑 Обновляем токен авторизации...");
+          try {
+            token = await googleDriveAuth.getToken(); // ✅ Автоматически обновит через refresh или запросит авторизацию
+          } catch (reAuthError) {
+            console.error("❌ Не удалось обновить токен:", reAuthError);
+          }
+        }
+
+        // Ждем перед следующей попыткой
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Экспоненциальная задержка
+        }
+      }
+    }
+
+    // Если все попытки не удались
+    if (!fileId) {
+      throw new Error(`Не удалось загрузить скриншот после ${maxRetries} попыток: ${lastError?.message}`);
+    }
+  }
+
+  // ========================================
+  // ЗАПИСЬ В ТАБЛИЦЫ (независимо от того, новый файл или существующий)
+  // ========================================
+  if (reportSheetId && fileId) {
+    try {
+      // ========================================
+      // ЗАПИСЬ В ЛИСТ Complaints
+      // ========================================
+      // НОВАЯ Структура Complaints:
+      // A: Дата проверки, B: Кабинет, C: Артикул, D: ID отзыва, E: Рейтинг отзыва,
+      // F: Дата отзыва, G: Дата подачи жалобы, H: Статус, I: Скриншот, J: Имя файла, K: Ссылка Drive, L: Путь
+
+      // Проверяем существование записи перед добавлением (предотвращение дублей)
+      const exists = await googleSheetsAPI.checkComplaintExists(
+        token,
+        reportSheetId,
+        'Complaints',
+        {
+          cabinet: cabinetName || '',
+          articul: articul,
+          feedbackDate: feedbackDate || '',
+          fileName: fileName
+        }
+      );
+
+      if (exists) {
+        console.log(`⏭️ [BACKGROUND] Запись уже существует в Complaints: ${fileName}`);
+        // Пропускаем запись, не добавляем дубль
+      } else {
+        // Запись уникальна, добавляем в таблицу
+        const checkDate = new Date().toLocaleDateString('ru-RU'); // Текущая дата проверки
+        const driveLink = `https://drive.google.com/file/d/${fileId}/view`; // Ссылка на файл
+        const drivePath = screenshotMode === 'allInOne'
+          ? `${cabinetName}/Screenshots/${complaintsSubfolderName}`
+          : `${cabinetName}/Screenshots/${complaintsSubfolderName}/${articul}`;
+
+        const complaintsValues = [
+          checkDate,                    // A: Дата проверки
+          cabinetName || '',            // B: Кабинет
+          articul,                      // C: Артикул
+          '',                           // D: ID отзыва (пока неизвестен, оставляем пустым)
+          feedbackRating || '',         // E: Рейтинг отзыва
+          feedbackDate || '',           // F: Дата отзыва
+          complaintSubmitDate || '',    // G: Дата подачи жалобы (DD.MM формат)
+          'Одобрена',                   // H: Статус
+          'Да',                         // I: Скриншот (да/нет)
+          fileName,                     // J: Имя файла
+          driveLink,                    // K: Ссылка Drive
+          drivePath                     // L: Путь
+        ];
+
+        await googleSheetsAPI.appendRow(token, reportSheetId, 'Complaints', complaintsValues);
+        console.log("✅ [BACKGROUND] Данные жалобы записаны в Complaints");
+      }
+    } catch (complaintsError) {
+      console.error("❌ [BACKGROUND] Ошибка записи в Complaints:", complaintsError);
+      // Не прерываем процесс, если запись в Complaints не удалась
+    }
+  }
+
+  return { skipped: fileAlreadyExists, fileId: fileId, fileName: fileName };
+}
+
+// ============================================
+// ПАРСИНГ ДАТЫ
+// ============================================
+function parseDate(lastElement) {
+  console.log("🔍 parseDate получил:", lastElement);
+
+  if (!lastElement || typeof lastElement !== "string") {
+    console.warn("⚠️ parseDate: пустое значение или не строка");
+    return "unknown_date";
+  }
+
+  const raw = lastElement.replace(/\u00A0/g, " ").trim().toLowerCase();
+  console.log("🔍 parseDate после обработки:", raw);
+
+  const months = {
+    янв: "01", января: "01", январь: "01",
+    фев: "02", февраля: "02", февраль: "02",
+    мар: "03", марта: "03", март: "03",
+    апр: "04", апреля: "04", апрель: "04",
+    май: "05", мая: "05",
+    июн: "06", июня: "06", июнь: "06",
+    июл: "07", июля: "07", июль: "07",
+    авг: "08", августа: "08", август: "08",
+    сен: "09", сентября: "09", сент: "09", сентябрь: "09",
+    окт: "10", октября: "10", октябрь: "10",
+    ноя: "11", ноября: "11", ноябрь: "11",
+    дек: "12", декабря: "12", декабрь: "12",
+  };
+
+  const re = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
+  const match = raw.match(re);
+
+  if (match) {
+    let [, day, monthName, year, hour, minute] = match;
+    day = day.padStart(2, "0");
+    hour = hour.padStart(2, "0");
+    minute = minute.padStart(2, "0");
+
+    let month = months[monthName];
+    if (!month) {
+      for (const key in months) {
+        if (monthName.startsWith(key)) {
+          month = months[key];
+          break;
+        }
+      }
+    }
+
+    if (month) {
+      const shortYear = String(year).slice(-2);
+      const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
+      console.log("✅ parseDate успешно:", result);
+      return result;
+    }
+  }
+
+  console.warn("❌ Не удалось распознать дату:", raw);
+  return "unknown_date";
+}
