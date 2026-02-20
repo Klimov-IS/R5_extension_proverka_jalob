@@ -61,7 +61,8 @@ async function handleLogout() {
 // LOAD CABINETS
 // ============================================
 async function loadCabinets() {
-  const SPREADSHEET_ID = "1D5xpmpYbhEYYKFg8CLzQ-bvyAJaK7pZAhtUdAuJjqhQ";
+  const SPREADSHEET_ID = "1-mxbnv0qkicJMVUCtqDGJH82FhLlDKDvICb-PAVbxfI";
+  const FOLDER_SHEET_NAME = "Список клиентов";
   const dropdownEl = document.getElementById("cabinetDropdown");
 
   dropdownEl.innerHTML = '<div class="cabinet-dropdown-item loading">⏳ Загрузка кабинетов...</div>';
@@ -87,7 +88,8 @@ async function loadCabinets() {
       console.log("📤 [DASHBOARD] Запрашиваем маппинг папок из Sheets...");
       const foldersResponse = await chrome.runtime.sendMessage({
         action: "getFolderMappings",
-        spreadsheetId: SPREADSHEET_ID
+        spreadsheetId: SPREADSHEET_ID,
+        sheetName: FOLDER_SHEET_NAME
       });
 
       if (foldersResponse.success) {

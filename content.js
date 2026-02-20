@@ -1146,7 +1146,22 @@ async function steppingByElements(art) {
             const isoDate = parseReviewDateToISO(reviewDateStr);
             if (isoDate) {
               const reviewKey = buildReviewKey(art, rating, isoDate);
-              statusResults.push({ reviewKey, status: apiStatus });
+
+              // Извлекаем текст из ячейки с датой жалобы (children[2])
+              const rowTextEl = child.children[2]?.querySelector(SELECTORS.dateText);
+              const rowText = rowTextEl?.innerText || '';
+
+              // Определяем кто подал жалобу и дату подачи
+              const complaintDatePattern = /Жалоба\s+от/i;
+              let filedBy = 'Продавец';
+              let complaintDate = null;
+
+              if (complaintDatePattern.test(rowText)) {
+                filedBy = 'R5';
+                complaintDate = extractComplaintSubmitDate(rowText);
+              }
+
+              statusResults.push({ reviewKey, status: apiStatus, filedBy, complaintDate });
             }
           }
         }
@@ -1288,6 +1303,8 @@ async function steppingByElements(art) {
       let complaintId = null;
       let productName = null;
       let feedbackRating = null;
+      let complaintCategory = null;
+      let complaintText = null;
 
       try {
         // Стратегия 1: Ищем через основной селектор feedbackInfo
@@ -1346,6 +1363,22 @@ async function steppingByElements(art) {
           console.log("⭐ Рейтинг отзыва:", feedbackRating, "из 5");
         } else {
           console.warn("⚠️ Рейтинг не найден в сайдбаре");
+        }
+
+        // Извлекаем категорию и текст жалобы из блока Complaint-info-block
+        const complaintInfoBlock = sidebar?.querySelector('[class*="Complaint-info-block__content"]');
+        if (complaintInfoBlock) {
+          const textSpans = complaintInfoBlock.querySelectorAll('span[data-name="Text"]');
+          if (textSpans.length >= 1) {
+            complaintCategory = textSpans[0]?.innerText?.trim() || '';
+            console.log("📋 Категория жалобы:", complaintCategory);
+          }
+          if (textSpans.length >= 2) {
+            complaintText = textSpans[1]?.innerText?.trim() || '';
+            console.log("📋 Текст жалобы:", complaintText.substring(0, 100) + (complaintText.length > 100 ? '...' : ''));
+          }
+        } else {
+          console.warn("⚠️ Блок Complaint-info-block не найден в сайдбаре");
         }
       } catch (e) {
         console.warn("❌ Ошибка при чтении сайдбара:", e);
@@ -1417,7 +1450,10 @@ async function steppingByElements(art) {
                 screenshotMode: state.screenshotMode, // Режим: 'byArticul' или 'allInOne'
                 cabinetName: state.cabinetName,       // Название кабинета для Complaints
                 complaintId: complaintId,             // ID жалобы для Complaints
-                reportSheetId: state.reportSheetId    // ID таблицы для записи в Complaints
+                reportSheetId: state.reportSheetId,   // ID таблицы для записи в Complaints
+                complaintCategory: complaintCategory, // Категория жалобы (из сайдбара)
+                complaintText: complaintText,         // Текст жалобы (из сайдбара)
+                storeId: state.cabinetId              // ID магазина для API complaint-details
               },
               (response) => {
                 if (chrome.runtime.lastError) {

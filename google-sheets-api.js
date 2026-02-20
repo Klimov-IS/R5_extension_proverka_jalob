@@ -286,7 +286,7 @@ class GoogleSheetsAPI {
   async checkComplaintExists(token, spreadsheetId, sheetName, criteria) {
     try {
       // Читаем все данные из листа
-      const range = `'${sheetName}'!A:K`; // Колонки A-K (11 колонок)
+      const range = `'${sheetName}'!A:M`; // Колонки A-M (13 колонок)
       const rows = await this.getSheetData(token, spreadsheetId, range);
 
       if (!rows || rows.length <= 1) {
@@ -294,9 +294,10 @@ class GoogleSheetsAPI {
         return false;
       }
 
-      // НОВАЯ Структура Complaints:
+      // Структура Complaints (Жалобы V 2.0):
       // A: Дата проверки, B: Кабинет, C: Артикул, D: ID отзыва, E: Рейтинг отзыва,
-      // F: Дата отзыва, G: Дата подачи жалобы, H: Статус, I: Скриншот, J: Имя файла, K: Ссылка Drive, L: Путь
+      // F: Дата отзыва, G: Дата подачи жалобы, H: Статус, I: Скриншот, J: Имя файла,
+      // K: Ссылка Drive, L: Категория жалобы, M: Текст жалобы
 
       // Ищем совпадение по: Кабинет (B) + Артикул (C) + Дата отзыва (F) + Имя файла (J)
       const { cabinet, articul, feedbackDate, fileName } = criteria;
@@ -331,29 +332,53 @@ class GoogleSheetsAPI {
     }
   }
 
-  // Получить маппинг папок Drive для кабинетов (только колонки A-E из Clients)
-  async getFolderMappings(token, spreadsheetId) {
+  // Получить маппинг папок Drive для кабинетов (поиск колонок по заголовкам)
+  async getFolderMappings(token, spreadsheetId, sheetName = 'Clients') {
     try {
-      console.log('📊 [SHEETS-API] Загружаем маппинг папок из Clients...');
-      const rows = await this.getSheetData(token, spreadsheetId, 'Clients!A:E');
+      console.log(`📊 [SHEETS-API] Загружаем маппинг папок из листа "${sheetName}"...`);
+      const rows = await this.getSheetData(token, spreadsheetId, `'${sheetName}'!A:Z`);
 
       if (!rows || rows.length <= 1) {
-        console.warn('⚠️ [SHEETS-API] Лист Clients пуст');
+        console.warn(`⚠️ [SHEETS-API] Лист "${sheetName}" пуст`);
         return [];
+      }
+
+      // Ищем колонки по заголовкам первой строки
+      const headers = rows[0].map(h => (h || '').trim().toLowerCase());
+
+      // Маппинг: ключ → возможные названия заголовков (в нижнем регистре)
+      const HEADER_ALIASES = {
+        clientId:      ['id магазина', 'clientid', 'id клиента', 'store id'],
+        clientName:    ['название', 'clientname', 'имя клиента', 'магазин', 'name'],
+        status:        ['статус', 'status'],
+        driveFolderUrl:       ['папка клиента', 'drivefolderid', 'папка drive', 'drive folder'],
+        screenshotsFolderUrl: ['скриншоты', 'screenshotsfolderid', 'папка скриншотов', 'screenshots folder']
+      };
+
+      const cols = {};
+      for (const [key, aliases] of Object.entries(HEADER_ALIASES)) {
+        cols[key] = headers.findIndex(h => aliases.includes(h));
+      }
+
+      console.log(`📊 [SHEETS-API] Найденные колонки:`, JSON.stringify(cols));
+
+      // Проверяем обязательные колонки
+      if (cols.clientName < 0) {
+        console.error('❌ [SHEETS-API] Не найдена колонка "Название" в заголовках:', rows[0]);
+        throw new Error(`Не найдена колонка "Название" в листе "${sheetName}". Заголовки: ${rows[0].join(', ')}`);
       }
 
       const mappings = [];
 
-      // Пропускаем заголовок
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
 
-        const clientId = row[0]?.trim();
-        const clientName = row[1]?.trim();
-        const status = row[2]?.trim();
-        const driveFolderUrl = row[3]?.trim();
-        const screenshotsFolderUrl = row[4]?.trim();
+        const clientId = cols.clientId >= 0 ? row[cols.clientId]?.trim() : '';
+        const clientName = cols.clientName >= 0 ? row[cols.clientName]?.trim() : '';
+        const status = cols.status >= 0 ? row[cols.status]?.trim() : '';
+        const driveFolderUrl = cols.driveFolderUrl >= 0 ? row[cols.driveFolderUrl]?.trim() : '';
+        const screenshotsFolderUrl = cols.screenshotsFolderUrl >= 0 ? row[cols.screenshotsFolderUrl]?.trim() : '';
 
         if (!clientName) continue;
 

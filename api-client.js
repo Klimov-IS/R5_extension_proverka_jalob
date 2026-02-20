@@ -104,6 +104,19 @@ class R5ApiClient {
     console.log(`✅ [API] Статусы отправлены: получено ${totalReceived}, обновлено ${totalUpdated}, пропущено ${totalSkipped}`);
     return { received: totalReceived, updated: totalUpdated, skipped: totalSkipped };
   }
+
+  // POST /api/extension/complaint-details — отправка данных одобренной жалобы
+  async postComplaintDetails(storeId, complaint) {
+    console.log(`📤 [API] Отправка complaint-details: ${complaint.articul}, ${complaint.fileName}`);
+
+    const response = await this.requestPost('/api/extension/complaint-details', {
+      storeId,
+      complaint
+    });
+
+    console.log(`✅ [API] complaint-details: created=${response.data?.created}`);
+    return response;
+  }
 }
 
 // Глобальная переменная для service worker

@@ -223,7 +223,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Получение маппинга папок Drive из Google Sheets
   if (msg.action === "getFolderMappings") {
     console.log("📥 [BACKGROUND] Получен запрос getFolderMappings");
-    const { spreadsheetId } = msg;
+    const { spreadsheetId, sheetName } = msg;
 
     if (!spreadsheetId) {
       sendResponse({ success: false, error: "Не указан ID таблицы" });
@@ -233,7 +233,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const token = await googleDriveAuth.getToken();
-        const mappings = await googleSheetsAPI.getFolderMappings(token, spreadsheetId);
+        const mappings = await googleSheetsAPI.getFolderMappings(token, spreadsheetId, sheetName);
         console.log("📤 [BACKGROUND] Отправляем маппинг папок:", mappings.length);
         sendResponse({ success: true, mappings });
       } catch (error) {
@@ -345,7 +345,10 @@ async function handleSaveScreenshot(msg) {
     screenshotMode,
     cabinetName,
     complaintId,
-    reportSheetId
+    reportSheetId,
+    complaintCategory,
+    complaintText,
+    storeId
   } = msg;
 
   if (!imageData) {
@@ -493,9 +496,10 @@ async function handleSaveScreenshot(msg) {
       // ========================================
       // ЗАПИСЬ В ЛИСТ Complaints
       // ========================================
-      // НОВАЯ Структура Complaints:
+      // Структура Complaints (Жалобы V 2.0):
       // A: Дата проверки, B: Кабинет, C: Артикул, D: ID отзыва, E: Рейтинг отзыва,
-      // F: Дата отзыва, G: Дата подачи жалобы, H: Статус, I: Скриншот, J: Имя файла, K: Ссылка Drive, L: Путь
+      // F: Дата отзыва, G: Дата подачи жалобы, H: Статус, I: Скриншот, J: Имя файла,
+      // K: Ссылка Drive, L: Категория жалобы, M: Текст жалобы
 
       // Проверяем существование записи перед добавлением (предотвращение дублей)
       const exists = await googleSheetsAPI.checkComplaintExists(
@@ -529,12 +533,38 @@ async function handleSaveScreenshot(msg) {
           'Одобрена',                   // H: Статус
           'Да',                         // I: Скриншот (да/нет)
           fileName,                     // J: Имя файла
-          driveLink                     // K: Ссылка Drive
+          driveLink,                    // K: Ссылка Drive
+          complaintCategory || '',      // L: Категория жалобы
+          complaintText || ''           // M: Текст жалобы
         ];
 
         await googleSheetsAPI.appendRow(token, reportSheetId, 'Жалобы V 2.0', complaintsValues);
         console.log("✅ [BACKGROUND] Данные жалобы записаны в Complaints");
         complaintsStatus = 'written';
+
+        // Параллельно отправляем в API complaint-details
+        if (storeId) {
+          try {
+            await r5ApiClient.postComplaintDetails(storeId, {
+              checkDate,
+              cabinetName: cabinetName || '',
+              articul,
+              reviewId: '',
+              feedbackRating: feedbackRating || '',
+              feedbackDate: feedbackDate || '',
+              complaintSubmitDate: complaintSubmitDate || '',
+              status: 'Одобрена',
+              hasScreenshot: true,
+              fileName,
+              driveLink,
+              complaintCategory: complaintCategory || '',
+              complaintText: complaintText || ''
+            });
+          } catch (apiErr) {
+            console.error("❌ [BACKGROUND] Ошибка отправки complaint-details в API:", apiErr.message);
+            // Не блокируем основной поток — таблица уже записана
+          }
+        }
       }
     } catch (err) {
       console.error("❌ [BACKGROUND] Ошибка записи в Complaints:", err);
