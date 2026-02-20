@@ -114,7 +114,7 @@ async function loadCabinets() {
         folderId: folders?.folderId || null,
         screenshotsFolderId: folders?.screenshotsFolderId || null,
         driveFolderId: folders?.driveFolderId || null,
-        reportSheetId: '1eqZCwzEnSS3uKc-NN-LK0dztcUARLO4YcbltQMPEj3A',
+        reportSheetId: '10Im1KF16nMHrObMMOLeH8tRVKBHRFv6RRnc6s_q4bK0',
         status: 'Активен',
         articulCount: 0              // Обновится после загрузки артикулов
       };
@@ -293,7 +293,7 @@ async function selectCabinetFromDropdown(index, cabinetName) {
   // ============================================
   // ЗАГРУЗКА ДАННЫХ ДЕДУПЛИКАЦИИ
   // ============================================
-  const REPORT_SHEET_ID = '1eqZCwzEnSS3uKc-NN-LK0dztcUARLO4YcbltQMPEj3A';
+  const REPORT_SHEET_ID = '10Im1KF16nMHrObMMOLeH8tRVKBHRFv6RRnc6s_q4bK0';
   const cabinetId = selectedCabinet.clientId || selectedCabinet.name;
 
   try {
@@ -609,7 +609,7 @@ async function startCheck() {
       cabinetName: selectedCabinet.name,
       cabinetFolderId: selectedCabinet.folderId,
       cabinetId: cabinetIdForCache, // Используем ту же логику, что и при сохранении кэша
-      reportSheetId: '1eqZCwzEnSS3uKc-NN-LK0dztcUARLO4YcbltQMPEj3A',
+      reportSheetId: '10Im1KF16nMHrObMMOLeH8tRVKBHRFv6RRnc6s_q4bK0',
       screenshotMode: screenshotMode
     });
 

@@ -54,9 +54,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Новый метод - сохранение готового изображения от html2canvas
   if (msg.action === "saveScreenshot") {
     handleSaveScreenshot(msg)
-      .then(() => {
+      .then((result) => {
         screenshotStats.success++;
-        sendResponse({ success: true });
+        sendResponse({ success: true, ...result });
       })
       .catch((err) => {
         screenshotStats.failed++;
@@ -245,6 +245,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Отправка статусов жалоб в API
+  if (msg.action === "sendComplaintStatuses") {
+    console.log("📥 [BACKGROUND] Получен запрос sendComplaintStatuses");
+    const { storeId, results } = msg;
+
+    if (!storeId || !results || results.length === 0) {
+      sendResponse({ success: false, error: "Не указаны storeId или results" });
+      return false;
+    }
+
+    console.log(`📤 [BACKGROUND] Отправляем ${results.length} статусов для магазина ${storeId}`);
+
+    (async () => {
+      try {
+        const data = await r5ApiClient.postComplaintStatuses(storeId, results);
+        console.log("📤 [BACKGROUND] Статусы отправлены:", data);
+        sendResponse({ success: true, data });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка sendComplaintStatuses:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
   // Получение списка кабинетов из Google Sheets (legacy, для совместимости)
   if (msg.action === "getCabinets") {
     console.log("📥 [BACKGROUND] Получен запрос getCabinets");
@@ -270,119 +296,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // Асинхронный ответ
   }
 
-  // Сохранение отчета в Google Sheets
-  if (msg.action === "saveReport") {
-    console.log("📥 [BACKGROUND] Получен запрос saveReport");
-    const { reportData } = msg;
-
-    if (!reportData || !reportData.reportSheetId) {
-      sendResponse({ success: false, error: "Не указаны данные отчета или ID таблицы" });
-      return false;
-    }
-
-    (async () => {
-      try {
-        const token = await googleDriveAuth.getToken();
-
-        // ========================================
-        // 1. ЛИСТ Report_Log - полная детализация
-        // ========================================
-        const reportLogValues = [
-          reportData.timestamp,
-          reportData.clientName,
-          reportData.clientId,
-          reportData.articulsChecked,
-          reportData.complaintsFound,
-          reportData.screenshotsSaved,
-          reportData.screenshotsSkipped,
-          reportData.dateRangeStart,
-          reportData.dateRangeEnd,
-          reportData.duration,
-          reportData.status,
-          reportData.errorMessage
-        ];
-
-        await googleSheetsAPI.appendRow(token, reportData.reportSheetId, 'Report_Log', reportLogValues);
-        console.log("✅ [BACKGROUND] Данные записаны в Report_Log");
-
-        console.log("✅ [BACKGROUND] Отчет успешно записан в Google Sheets");
-        sendResponse({ success: true });
-      } catch (error) {
-        console.error("❌ [BACKGROUND] Ошибка saveReport:", error);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-
-    return true; // Асинхронный ответ
-  }
-
-  // Сохранение статистики в Stats_Daily
-  if (msg.action === "saveStatsToSheet") {
-    console.log("📥 [BACKGROUND] Получен запрос saveStatsToSheet");
-    console.log("🔍 [DEBUG] reportSheetId:", msg.reportSheetId);
-    console.log("🔍 [DEBUG] Количество строк:", msg.statsRows?.length);
-    console.log("🔍 [DEBUG] Первая строка:", JSON.stringify(msg.statsRows?.[0], null, 2));
-
-    const { reportSheetId, statsRows } = msg;
-
-    if (!reportSheetId || !statsRows || statsRows.length === 0) {
-      console.error("❌ [BACKGROUND] Валидация не прошла:");
-      console.error("   reportSheetId:", reportSheetId);
-      console.error("   statsRows:", statsRows);
-      sendResponse({ success: false, error: "Не указаны данные статистики или ID таблицы" });
-      return false;
-    }
-
-    (async () => {
-      try {
-        console.log("🔑 [BACKGROUND] Получаем токен авторизации...");
-        const token = await googleDriveAuth.getToken();
-        console.log("✅ [BACKGROUND] Токен получен");
-
-        let insertedCount = 0;
-        let updatedCount = 0;
-
-        console.log(`📊 [BACKGROUND] Обрабатываем ${statsRows.length} строк статистики...`);
-
-        // Обрабатываем каждую строку статистики
-        for (let i = 0; i < statsRows.length; i++) {
-          const row = statsRows[i];
-          console.log(`🔄 [BACKGROUND] Строка ${i + 1}/${statsRows.length}:`, row);
-
-          const result = await googleSheetsAPI.upsertStatsRow(
-            token,
-            reportSheetId,
-            'Stats_Daily',
-            {
-              clientName: row.clientName,
-              article: row.article,
-              complaintDate: row.complaintDate,
-              totalComplaints: row.totalComplaints,
-              approvedComplaints: row.approvedComplaints
-            }
-          );
-
-          console.log(`✅ [BACKGROUND] Результат UPSERT для строки ${i + 1}:`, result);
-
-          if (result.action === 'inserted') {
-            insertedCount++;
-          } else if (result.action === 'updated') {
-            updatedCount++;
-          }
-        }
-
-        console.log(`✅ [BACKGROUND] Статистика обработана: ${insertedCount} новых, ${updatedCount} обновлено`);
-        sendResponse({ success: true, inserted: insertedCount, updated: updatedCount });
-      } catch (error) {
-        console.error("❌ [BACKGROUND] Ошибка saveStatsToSheet:", error);
-        console.error("❌ [BACKGROUND] Stack trace:", error.stack);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-
-    return true; // Асинхронный ответ
-  }
-
   // Получение списка имен файлов из Complaints (для дедупликации)
   if (msg.action === "getComplaintsFilenames") {
     console.log("📥 [BACKGROUND] Получен запрос getComplaintsFilenames");
@@ -399,7 +312,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Читаем колонку J (Имя файла) из листа Complaints
         console.log(`📊 [BACKGROUND] Читаем колонку J (Имя файла) из Complaints (reportSheetId: ${reportSheetId})`);
-        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, 'Complaints!J:J');
+        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, "'Жалобы V 2.0'!J:J");
 
         // Извлекаем имена файлов (пропускаем заголовок)
         const filenames = rows.length > 1
@@ -572,6 +485,9 @@ async function handleSaveScreenshot(msg) {
   // ========================================
   // ЗАПИСЬ В ТАБЛИЦЫ (независимо от того, новый файл или существующий)
   // ========================================
+  let complaintsStatus = 'skipped'; // Статус записи: 'written', 'duplicate', 'error', 'skipped'
+  let complaintsError = null;
+
   if (reportSheetId && fileId) {
     try {
       // ========================================
@@ -585,7 +501,7 @@ async function handleSaveScreenshot(msg) {
       const exists = await googleSheetsAPI.checkComplaintExists(
         token,
         reportSheetId,
-        'Complaints',
+        'Жалобы V 2.0',
         {
           cabinet: cabinetName || '',
           articul: articul,
@@ -596,14 +512,11 @@ async function handleSaveScreenshot(msg) {
 
       if (exists) {
         console.log(`⏭️ [BACKGROUND] Запись уже существует в Complaints: ${fileName}`);
-        // Пропускаем запись, не добавляем дубль
+        complaintsStatus = 'duplicate';
       } else {
         // Запись уникальна, добавляем в таблицу
         const checkDate = new Date().toLocaleDateString('ru-RU'); // Текущая дата проверки
         const driveLink = `https://drive.google.com/file/d/${fileId}/view`; // Ссылка на файл
-        const drivePath = screenshotMode === 'allInOne'
-          ? `${cabinetName}/Screenshots/${complaintsSubfolderName}`
-          : `${cabinetName}/Screenshots/${complaintsSubfolderName}/${articul}`;
 
         const complaintsValues = [
           checkDate,                    // A: Дата проверки
@@ -616,20 +529,25 @@ async function handleSaveScreenshot(msg) {
           'Одобрена',                   // H: Статус
           'Да',                         // I: Скриншот (да/нет)
           fileName,                     // J: Имя файла
-          driveLink,                    // K: Ссылка Drive
-          drivePath                     // L: Путь
+          driveLink                     // K: Ссылка Drive
         ];
 
-        await googleSheetsAPI.appendRow(token, reportSheetId, 'Complaints', complaintsValues);
+        await googleSheetsAPI.appendRow(token, reportSheetId, 'Жалобы V 2.0', complaintsValues);
         console.log("✅ [BACKGROUND] Данные жалобы записаны в Complaints");
+        complaintsStatus = 'written';
       }
-    } catch (complaintsError) {
-      console.error("❌ [BACKGROUND] Ошибка записи в Complaints:", complaintsError);
-      // Не прерываем процесс, если запись в Complaints не удалась
+    } catch (err) {
+      console.error("❌ [BACKGROUND] Ошибка записи в Complaints:", err);
+      console.error("❌ [BACKGROUND] Stack:", err.stack);
+      console.error("❌ [BACKGROUND] Детали: reportSheetId =", reportSheetId, ", fileName =", fileName, ", fileId =", fileId);
+      complaintsStatus = 'error';
+      complaintsError = err.message;
     }
+  } else {
+    console.warn("⚠️ [BACKGROUND] Пропуск записи в Complaints: reportSheetId =", reportSheetId, ", fileId =", fileId);
   }
 
-  return { skipped: fileAlreadyExists, fileId: fileId, fileName: fileName };
+  return { skipped: fileAlreadyExists, fileId, fileName, complaintsStatus, complaintsError };
 }
 
 // ============================================

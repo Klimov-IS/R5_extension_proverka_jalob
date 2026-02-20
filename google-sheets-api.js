@@ -282,166 +282,11 @@ class GoogleSheetsAPI {
     return cabinets.find(c => c.name === cabinetName);
   }
 
-  // ============================================
-  // ОТЧЕТНОСТЬ: Запись в Google Sheets
-  // ============================================
-
-  // UPSERT: Добавить или обновить строку статистики
-  async upsertStatsRow(token, spreadsheetId, sheetName, statsData) {
-    try {
-      // Уникальный ключ: ClientName + Article + ComplaintDate
-      const { clientName, article, complaintDate, totalComplaints, approvedComplaints } = statsData;
-
-      console.log(`🔄 [SHEETS-API] UPSERT для: ${clientName} | ${article} | ${complaintDate}`);
-      console.log(`🔍 [SHEETS-API] Параметры:`, {
-        spreadsheetId,
-        sheetName,
-        clientName,
-        article,
-        complaintDate,
-        totalComplaints,
-        approvedComplaints
-      });
-
-      // Читаем все данные из листа Stats_Daily
-      const range = `${sheetName}!A:G`; // Колонки A-G (7 колонок)
-      console.log(`📖 [SHEETS-API] Читаем данные из диапазона: ${range}`);
-
-      const rows = await this.getSheetData(token, spreadsheetId, range);
-      console.log(`📊 [SHEETS-API] Получено строк: ${rows?.length || 0}`);
-
-      if (!rows || rows.length === 0) {
-        // Лист пустой - добавляем первую строку
-        console.log('📊 [SHEETS-API] Лист пустой, добавляем первую запись');
-        const newRow = [
-          clientName,
-          article,
-          complaintDate,
-          totalComplaints,
-          approvedComplaints,
-          new Date().toLocaleString('ru-RU'),
-          1 // CheckCount = 1
-        ];
-        console.log('📝 [SHEETS-API] Новая строка:', newRow);
-        await this.appendRow(token, spreadsheetId, sheetName, newRow);
-        console.log('✅ [SHEETS-API] Первая запись добавлена');
-        return { action: 'inserted' };
-      }
-
-      // Ищем существующую запись
-      let existingRowIndex = -1;
-      console.log(`🔍 [SHEETS-API] Ищем существующую запись для: ${clientName} | ${article} | ${complaintDate}`);
-
-      for (let i = 1; i < rows.length; i++) { // Пропускаем заголовок (индекс 0)
-        const row = rows[i];
-
-        const rowClientName = row[0]?.trim() || '';
-        const rowArticle = row[1]?.trim() || '';
-        const rowComplaintDate = row[2]?.trim() || '';
-
-        // Проверяем совпадение уникального ключа
-        if (
-          rowClientName === clientName &&
-          rowArticle === article &&
-          rowComplaintDate === complaintDate
-        ) {
-          existingRowIndex = i + 1; // +1 потому что Google Sheets начинается с 1
-          console.log(`✅ [SHEETS-API] Найдена существующая запись в строке ${existingRowIndex}`);
-          break;
-        }
-      }
-
-      if (existingRowIndex > 0) {
-        // ОБНОВЛЕНИЕ существующей записи
-        console.log(`🔄 [SHEETS-API] Обновляем существующую строку ${existingRowIndex}`);
-        const oldCheckCount = parseInt(rows[existingRowIndex - 1][6]) || 0; // Индекс 6 = CheckCount
-        const newCheckCount = oldCheckCount + 1;
-
-        const updateRange = `${sheetName}!A${existingRowIndex}:G${existingRowIndex}`;
-        const updateValues = [
-          clientName,
-          article,
-          complaintDate,
-          totalComplaints,
-          approvedComplaints,
-          new Date().toLocaleString('ru-RU'),
-          newCheckCount
-        ];
-
-        console.log(`📝 [SHEETS-API] Обновляем range: ${updateRange}, значения:`, updateValues);
-        await this.updateRow(token, spreadsheetId, updateRange, updateValues);
-        console.log(`✅ [SHEETS-API] Запись обновлена (строка ${existingRowIndex}, CheckCount: ${newCheckCount})`);
-
-        return { action: 'updated', row: existingRowIndex, checkCount: newCheckCount };
-      } else {
-        // ВСТАВКА новой записи
-        console.log('📝 [SHEETS-API] Добавляем новую запись (существующая не найдена)');
-        const newRow = [
-          clientName,
-          article,
-          complaintDate,
-          totalComplaints,
-          approvedComplaints,
-          new Date().toLocaleString('ru-RU'),
-          1 // CheckCount = 1
-        ];
-        console.log('📝 [SHEETS-API] Новая строка:', newRow);
-        await this.appendRow(token, spreadsheetId, sheetName, newRow);
-        console.log('✅ [SHEETS-API] Новая запись добавлена');
-
-        return { action: 'inserted' };
-      }
-    } catch (error) {
-      console.error(`❌ [SHEETS-API] Ошибка UPSERT в "${sheetName}":`, error);
-      console.error(`❌ [SHEETS-API] Stack trace:`, error.stack);
-      console.error(`❌ [SHEETS-API] Детали ошибки:`, {
-        message: error.message,
-        name: error.name,
-        spreadsheetId,
-        sheetName,
-        statsData
-      });
-      throw error;
-    }
-  }
-
-  // Обновление существующей строки
-  async updateRow(token, spreadsheetId, range, values) {
-    try {
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`;
-
-      console.log(`📝 Обновление строки: ${range}`);
-
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: [values] // Массив значений для одной строки
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Ошибка обновления строки: ${response.status} ${response.statusText}\n${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log(`✅ Строка обновлена: ${range}`);
-      return data;
-    } catch (error) {
-      console.error(`❌ Ошибка обновления строки "${range}":`, error);
-      throw error;
-    }
-  }
-
   // Проверка существования записи в Complaints (для предотвращения дублей)
   async checkComplaintExists(token, spreadsheetId, sheetName, criteria) {
     try {
-      // Читаем все данные из листа Complaints
-      const range = `${sheetName}!A:L`; // Колонки A-L (12 колонок с учетом Рейтинг отзыва)
+      // Читаем все данные из листа
+      const range = `'${sheetName}'!A:K`; // Колонки A-K (11 колонок)
       const rows = await this.getSheetData(token, spreadsheetId, range);
 
       if (!rows || rows.length <= 1) {
@@ -538,7 +383,10 @@ class GoogleSheetsAPI {
   // Добавление строки в конец таблицы (для отчетов)
   async appendRow(token, spreadsheetId, sheetName, values) {
     try {
-      const range = `${sheetName}!A:Z`; // Диапазон всех столбцов
+      // Используем точный диапазон столбцов, чтобы API не путал расположение таблицы
+      const colCount = values.length;
+      const lastCol = String.fromCharCode(64 + Math.min(colCount, 26)); // A=1, B=2, ..., L=12, Z=26
+      const range = `'${sheetName}'!A:${lastCol}`;
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`;
 
       console.log(`📝 Добавление строки в лист "${sheetName}":`, values);

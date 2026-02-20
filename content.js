@@ -36,6 +36,124 @@ const SELECTORS = {
   paginationButton: '[class*="Pagination-icon-button__"]',
 };
 
+// ============================================
+// МАППИНГ СТАТУСОВ WB → API
+// ============================================
+const WB_STATUS_MAP = {
+  'Одобрена': 'Жалоба одобрена',
+  'Отклонена': 'Жалоба отклонена',
+  'Проверяем жалобу': 'Проверяем жалобу',
+  'Пересмотрена': 'Жалоба пересмотрена',
+};
+
+// Словарь месяцев для парсинга дат WB
+const MONTHS_MAP = {
+  'янв': '01', 'января': '01', 'январь': '01',
+  'фев': '02', 'февраля': '02', 'февраль': '02', 'февр': '02',
+  'мар': '03', 'марта': '03', 'март': '03',
+  'апр': '04', 'апреля': '04', 'апрель': '04',
+  'май': '05', 'мая': '05',
+  'июн': '06', 'июня': '06', 'июнь': '06',
+  'июл': '07', 'июля': '07', 'июль': '07',
+  'авг': '08', 'августа': '08', 'август': '08',
+  'сен': '09', 'сентября': '09', 'сент': '09', 'сентябрь': '09',
+  'окт': '10', 'октября': '10', 'октябрь': '10',
+  'ноя': '11', 'ноября': '11', 'ноябрь': '11',
+  'дек': '12', 'декабря': '12', 'декабрь': '12',
+};
+
+/**
+ * Парсит дату WB "18 февр. 2026 г. в 21:45" → "2026-02-18T21:45"
+ */
+function parseReviewDateToISO(dateStr) {
+  if (!dateStr) return null;
+
+  const raw = dateStr.replace(/\u00A0/g, ' ').trim().toLowerCase();
+  const re = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
+  const match = raw.match(re);
+
+  if (!match) return null;
+
+  let [, day, monthName, year, hour, minute] = match;
+  day = day.padStart(2, '0');
+  hour = hour.padStart(2, '0');
+
+  let month = MONTHS_MAP[monthName];
+  if (!month) {
+    for (const key in MONTHS_MAP) {
+      if (monthName.startsWith(key)) {
+        month = MONTHS_MAP[key];
+        break;
+      }
+    }
+  }
+
+  if (!month) return null;
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+/**
+ * Формирует reviewKey: "{nmId}_{rating}_{YYYY-MM-DDTHH:mm}"
+ */
+function buildReviewKey(nmId, rating, isoDate) {
+  return `${nmId}_${rating}_${isoDate}`;
+}
+
+/**
+ * Извлекает рейтинг (1-5) из строки таблицы по количеству активных звёзд
+ */
+function parseRatingFromRow(rowElement) {
+  // Стратегия 1: Feedback-info-cell
+  const feedbackCell = rowElement.querySelector('[class*="Feedback-info-cell"]');
+  if (feedbackCell) {
+    const activeStars = feedbackCell.querySelectorAll('[class*="Rating--active"]');
+    if (activeStars.length > 0) return activeStars.length;
+  }
+
+  // Стратегия 2: children[4] (fallback)
+  if (rowElement.children[4]) {
+    const activeStars = rowElement.children[4].querySelectorAll('[class*="Rating--active"]');
+    if (activeStars.length > 0) return activeStars.length;
+  }
+
+  return null;
+}
+
+/**
+ * Извлекает дату отзыва из строки таблицы (Feedback-info-cell)
+ * Возвращает строку вида "18 февр. 2026 г. в 21:45"
+ */
+function getReviewDateFromRow(rowElement) {
+  const datePattern = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+
+  // Стратегия 1: Feedback-info-cell
+  const feedbackCell = rowElement.querySelector('[class*="Feedback-info-cell"]');
+  if (feedbackCell) {
+    const spans = feedbackCell.querySelectorAll('span[data-name="Text"]');
+    for (const span of spans) {
+      const match = span.innerText?.match(datePattern);
+      if (match) return match[1];
+    }
+    // Fallback: все span'ы
+    const allSpans = feedbackCell.querySelectorAll('span');
+    for (const span of allSpans) {
+      const match = span.innerText?.match(datePattern);
+      if (match) return match[1];
+    }
+  }
+
+  // Стратегия 2: children[4]
+  if (rowElement.children[4]) {
+    const spans = rowElement.children[4].querySelectorAll('span');
+    for (const span of spans) {
+      const match = span.innerText?.match(datePattern);
+      if (match) return match[1];
+    }
+  }
+
+  return null;
+}
+
 // Задержки в миллисекундах
 const DELAYS = {
   afterSearch: 3000,      // После ввода в поиск (увеличено для стабильной загрузки)
@@ -898,9 +1016,6 @@ function showConfirmModal() {
 
     await processAllArticuls();
 
-    // Отправляем отчет в Google Sheets
-    await sendReport();
-
     removeProgressUI();
     showStats();
   });
@@ -1003,6 +1118,7 @@ async function steppingByElements(art) {
   }
 
   let pageNum = 1;
+  const statusResults = []; // Сбор статусов жалоб для отправки в API
 
   while (state.isRunning) {
     parent = document.querySelector(SELECTORS.tableBody);
@@ -1014,6 +1130,30 @@ async function steppingByElements(art) {
     for (let child of children) {
       // Проверяем флаг остановки
       if (!state.isRunning) break;
+
+      // ============================================
+      // СБОР СТАТУСА ЖАЛОБЫ (для ВСЕХ строк, до проверки даты)
+      // ============================================
+      try {
+        const statusText = child.querySelector(SELECTORS.statusChip)?.innerText?.trim();
+        const apiStatus = statusText ? WB_STATUS_MAP[statusText] : null;
+
+        if (apiStatus) {
+          const rating = parseRatingFromRow(child);
+          const reviewDateStr = getReviewDateFromRow(child);
+
+          if (rating && reviewDateStr) {
+            const isoDate = parseReviewDateToISO(reviewDateStr);
+            if (isoDate) {
+              const reviewKey = buildReviewKey(art, rating, isoDate);
+              statusResults.push({ reviewKey, status: apiStatus });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Ошибка сбора статуса строки:', e);
+      }
+      // ============================================
 
       const textEl = child.children[2]?.querySelector(SELECTORS.dateText);
       if (!textEl) continue;
@@ -1305,6 +1445,17 @@ async function steppingByElements(art) {
               state.screenshotsSaved++; // Счетчик сохраненных
               screenshotSuccess = true;
             }
+
+            // Логируем статус записи в Complaints
+            if (response.complaintsStatus === 'written') {
+              console.log("📝 [Complaints] ✅ Запись добавлена в таблицу:", response.fileName);
+            } else if (response.complaintsStatus === 'duplicate') {
+              console.log("📝 [Complaints] ⏭️ Дубликат, пропущено:", response.fileName);
+            } else if (response.complaintsStatus === 'error') {
+              console.error("📝 [Complaints] ❌ ОШИБКА записи:", response.complaintsError);
+            } else if (response.complaintsStatus === 'skipped') {
+              console.warn("📝 [Complaints] ⚠️ Запись пропущена (нет reportSheetId или fileId)");
+            }
           } else {
             console.warn("⚠️ Скриншот не сохранён:", response?.error);
           }
@@ -1341,6 +1492,30 @@ async function steppingByElements(art) {
     } else {
       break;
     }
+  }
+
+  // ============================================
+  // ОТПРАВКА СТАТУСОВ ЖАЛОБ В API
+  // ============================================
+  if (statusResults.length > 0 && state.cabinetId) {
+    console.log(`📤 Отправляем ${statusResults.length} статусов для артикула ${art} (storeId: ${state.cabinetId})`);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: 'sendComplaintStatuses',
+        storeId: state.cabinetId,
+        results: statusResults
+      });
+
+      if (response && response.success) {
+        console.log(`✅ Статусы отправлены: обновлено ${response.data?.updated || 0}, пропущено ${response.data?.skipped || 0}`);
+      } else {
+        console.error('❌ Ошибка отправки статусов:', response?.error);
+      }
+    } catch (e) {
+      console.error('❌ Ошибка отправки статусов в API:', e);
+    }
+  } else if (statusResults.length === 0) {
+    console.log(`ℹ️ Нет статусов для отправки по артикулу ${art}`);
   }
 }
 
@@ -1499,130 +1674,6 @@ function copyStatsToClipboard(rows) {
     console.error("Ошибка копирования:", err);
     alert("Не удалось скопировать данных. Попробуйте еще раз.");
   });
-}
-
-// ============================================
-// ОТЧЕТНОСТЬ: Отправка отчета в Google Sheets
-// ============================================
-
-async function sendReport() {
-  // Проверяем что ID таблицы отчетов указан
-  if (!state.reportSheetId) {
-    console.log("ℹ️ ID таблицы отчетов не указан, пропускаем отправку отчета");
-    return;
-  }
-
-  console.log("📊 Формируем отчет для отправки в Google Sheets...");
-
-  const reportData = {
-    timestamp: new Date().toLocaleString('ru-RU'),
-    clientName: state.cabinetName,
-    clientId: state.cabinetId || '',
-    articulsChecked: state.articuls.length,
-    complaintsFound: state.totalComplaintsFound,
-    screenshotsSaved: state.screenshotsSaved,
-    screenshotsSkipped: state.screenshotsSkipped,
-    dateRangeStart: state.startDate,
-    dateRangeEnd: state.endDate,
-    duration: getElapsedTime(),
-    status: state.isRunning ? 'Завершено' : 'Остановлено',
-    errorMessage: state.lastError || '',
-    reportSheetId: state.reportSheetId
-  };
-
-  try {
-    console.log("📤 Отправляем отчет в background для записи в Sheets...");
-
-    const response = await chrome.runtime.sendMessage({
-      action: 'saveReport',
-      reportData: reportData
-    });
-
-    if (response && response.success) {
-      console.log("✅ Отчет успешно сохранен в Google Sheets");
-
-      // Показываем уведомление в overlay
-      const statusEl = document.getElementById("overlay-status");
-      if (statusEl) {
-        const oldText = statusEl.textContent;
-        const oldBg = statusEl.style.background;
-        statusEl.textContent = "Отчет сохранен";
-        statusEl.style.background = "#4caf50";
-
-        setTimeout(() => {
-          statusEl.textContent = oldText;
-          statusEl.style.background = oldBg;
-        }, 3000);
-      }
-    } else {
-      console.error("❌ Ошибка сохранения отчета:", response?.error);
-    }
-
-    // ============================================
-    // ОТПРАВКА СТАТИСТИКИ В STATS_DAILY
-    // ============================================
-    console.log("📊 Формируем статистику для отправки в Stats_Daily...");
-    console.log("🔍 [DEBUG] state.reportSheetId:", state.reportSheetId);
-    console.log("🔍 [DEBUG] state.cabinetName:", state.cabinetName);
-    console.log("🔍 [DEBUG] state.stats структура:", Object.keys(state.stats).length, "артикулов");
-
-    // Формируем массив данных из state.stats
-    const statsRows = [];
-    for (const [articul, dates] of Object.entries(state.stats)) {
-      console.log(`🔍 [DEBUG] Обрабатываем артикул: ${articul}, дат: ${Object.keys(dates).length}`);
-      for (const [date, counts] of Object.entries(dates)) {
-        console.log(`🔍 [DEBUG]   Дата: ${date}, total: ${counts.total}, approved: ${counts.approved}`);
-        // Отправляем только строки где были жалобы
-        if (counts.total > 0) {
-          const row = {
-            clientName: state.cabinetName,
-            article: articul,
-            complaintDate: date, // Формат DD.MM
-            totalComplaints: counts.total,
-            approvedComplaints: counts.approved
-          };
-          statsRows.push(row);
-          console.log(`✅ [DEBUG]   Добавлена строка:`, row);
-        }
-      }
-    }
-
-    console.log(`📊 [DEBUG] Итого строк для отправки: ${statsRows.length}`);
-    if (statsRows.length > 0) {
-      console.log(`📤 Отправляем ${statsRows.length} строк статистики в Stats_Daily...`);
-      console.log(`🔍 [DEBUG] Детали первой строки:`, JSON.stringify(statsRows[0], null, 2));
-
-      const statsResponse = await chrome.runtime.sendMessage({
-        action: 'saveStatsToSheet',
-        reportSheetId: state.reportSheetId,
-        statsRows: statsRows
-      });
-
-      if (statsResponse && statsResponse.success) {
-        console.log(`✅ Статистика успешно сохранена: ${statsResponse.inserted} новых, ${statsResponse.updated} обновлено`);
-
-        // Показываем уведомление в overlay
-        const statusEl = document.getElementById("overlay-status");
-        if (statusEl) {
-          statusEl.textContent = "Статистика сохранена";
-          statusEl.style.background = "#4caf50";
-
-          setTimeout(() => {
-            statusEl.textContent = "";
-            statusEl.style.background = "rgba(255, 255, 255, 0.2)";
-          }, 3000);
-        }
-      } else {
-        console.error("❌ Ошибка сохранения статистики:", statsResponse?.error);
-      }
-    } else {
-      console.log("ℹ️ Нет данных статистики для отправки (все даты с нулевыми жалобами)");
-    }
-
-  } catch (error) {
-    console.error("❌ Ошибка отправки отчета:", error);
-    state.lastError = error.message;
-  }
 }
 
 // Закрываем IIFE
