@@ -486,6 +486,55 @@ class GoogleSheetsAPI {
     }
   }
 
+  // Получить маппинг папок Drive для кабинетов (только колонки A-E из Clients)
+  async getFolderMappings(token, spreadsheetId) {
+    try {
+      console.log('📊 [SHEETS-API] Загружаем маппинг папок из Clients...');
+      const rows = await this.getSheetData(token, spreadsheetId, 'Clients!A:E');
+
+      if (!rows || rows.length <= 1) {
+        console.warn('⚠️ [SHEETS-API] Лист Clients пуст');
+        return [];
+      }
+
+      const mappings = [];
+
+      // Пропускаем заголовок
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
+
+        const clientId = row[0]?.trim();
+        const clientName = row[1]?.trim();
+        const status = row[2]?.trim();
+        const driveFolderUrl = row[3]?.trim();
+        const screenshotsFolderUrl = row[4]?.trim();
+
+        if (!clientName) continue;
+
+        // Пропускаем неактивные
+        if (status && status.toLowerCase() !== 'активен') continue;
+
+        const screenshotsFolderId = this.extractFolderIdFromUrl(screenshotsFolderUrl);
+        const driveFolderId = this.extractFolderIdFromUrl(driveFolderUrl);
+
+        mappings.push({
+          clientId,
+          name: clientName,
+          folderId: screenshotsFolderId || driveFolderId,
+          screenshotsFolderId,
+          driveFolderId
+        });
+      }
+
+      console.log(`✅ [SHEETS-API] Маппинг папок: ${mappings.length} кабинетов`);
+      return mappings;
+    } catch (error) {
+      console.error('❌ [SHEETS-API] Ошибка getFolderMappings:', error);
+      throw error;
+    }
+  }
+
   // Добавление строки в конец таблицы (для отчетов)
   async appendRow(token, spreadsheetId, sheetName, values) {
     try {

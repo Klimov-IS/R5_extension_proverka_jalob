@@ -67,22 +67,63 @@ async function loadCabinets() {
   dropdownEl.innerHTML = '<div class="cabinet-dropdown-item loading">⏳ Загрузка кабинетов...</div>';
 
   try {
-    console.log("📤 [DASHBOARD] Запрашиваем список кабинетов...");
-    const response = await chrome.runtime.sendMessage({
-      action: "getCabinets",
-      spreadsheetId: SPREADSHEET_ID
+    console.log("📤 [DASHBOARD] Запрашиваем список магазинов из API...");
+
+    // Шаг 1: Получаем активные магазины из R5 API
+    const storesResponse = await chrome.runtime.sendMessage({
+      action: "getStoresFromAPI"
     });
 
-    if (response.success) {
-      cabinetsData = response.cabinets;
-      console.log("✅ [DASHBOARD] Получено кабинетов:", cabinetsData.length);
-
-      // Отображаем кабинеты в dropdown
-      renderCabinets();
-    } else {
-      console.error("❌ [DASHBOARD] Ошибка:", response.error);
-      dropdownEl.innerHTML = `<div class="cabinet-dropdown-item no-results">❌ Ошибка: ${response.error}</div>`;
+    if (!storesResponse.success) {
+      throw new Error(storesResponse.error || "Ошибка загрузки магазинов из API");
     }
+
+    const stores = storesResponse.stores;
+    console.log("✅ [DASHBOARD] Получено магазинов из API:", stores.length);
+
+    // Шаг 2: Получаем маппинг папок Drive из Google Sheets
+    let folderMappings = [];
+    try {
+      console.log("📤 [DASHBOARD] Запрашиваем маппинг папок из Sheets...");
+      const foldersResponse = await chrome.runtime.sendMessage({
+        action: "getFolderMappings",
+        spreadsheetId: SPREADSHEET_ID
+      });
+
+      if (foldersResponse.success) {
+        folderMappings = foldersResponse.mappings;
+        console.log("✅ [DASHBOARD] Получен маппинг папок:", folderMappings.length);
+      } else {
+        console.warn("⚠️ [DASHBOARD] Не удалось загрузить маппинг папок:", foldersResponse.error);
+      }
+    } catch (folderError) {
+      console.warn("⚠️ [DASHBOARD] Ошибка загрузки маппинга папок:", folderError);
+    }
+
+    // Шаг 3: Объединяем данные API + Sheets
+    cabinetsData = stores.map(store => {
+      // Ищем маппинг по имени (основной) или по ID (fallback)
+      const folders = folderMappings.find(
+        f => f.name.toLowerCase() === store.name.toLowerCase() || f.clientId === store.id
+      );
+
+      return {
+        clientId: store.id,
+        name: store.name,
+        articuls: [],                // Загрузятся при выборе кабинета
+        folderId: folders?.folderId || null,
+        screenshotsFolderId: folders?.screenshotsFolderId || null,
+        driveFolderId: folders?.driveFolderId || null,
+        reportSheetId: '1eqZCwzEnSS3uKc-NN-LK0dztcUARLO4YcbltQMPEj3A',
+        status: 'Активен',
+        articulCount: 0              // Обновится после загрузки артикулов
+      };
+    });
+
+    console.log("✅ [DASHBOARD] Объединено кабинетов:", cabinetsData.length);
+
+    // Отображаем кабинеты в dropdown
+    renderCabinets();
   } catch (error) {
     console.error("❌ [DASHBOARD] Ошибка загрузки кабинетов:", error);
     dropdownEl.innerHTML = `<div class="cabinet-dropdown-item no-results">❌ Ошибка: ${error.message}</div>`;
@@ -115,11 +156,14 @@ function renderCabinets() {
     nameSpan.className = "cabinet-name";
     nameSpan.textContent = cabinet.name;
 
-    // Количество артикулов справа
+    // Количество артикулов справа (или индикатор загрузки)
     const countSpan = document.createElement("span");
     countSpan.className = "cabinet-count";
+    countSpan.id = `cabinet-count-${index}`;
 
-    if (articulCount === 0) {
+    if (articulCount === 0 && !cabinet._articulesLoaded) {
+      countSpan.innerHTML = '📦 выберите для загрузки';
+    } else if (articulCount === 0) {
       countSpan.innerHTML = '⚠️ нет артикулов';
     } else if (articulCount === 1) {
       countSpan.innerHTML = `📦 ${articulCount} артикул`;
@@ -205,6 +249,46 @@ async function selectCabinetFromDropdown(index, cabinetName) {
   // Выбираем кабинет
   selectedCabinet = cabinetsData[parseInt(index)];
   console.log("📂 [DASHBOARD] Выбран кабинет:", selectedCabinet);
+
+  // ============================================
+  // ЗАГРУЗКА АРТИКУЛОВ ИЗ API
+  // ============================================
+  if (!selectedCabinet._articulesLoaded) {
+    try {
+      console.log(`📤 [DASHBOARD] Загружаем артикулы для магазина ${selectedCabinet.clientId}...`);
+
+      // Обновляем счётчик в dropdown
+      const countEl = document.getElementById(`cabinet-count-${index}`);
+      if (countEl) countEl.innerHTML = '⏳ загрузка...';
+
+      const productsResponse = await chrome.runtime.sendMessage({
+        action: "getActiveProducts",
+        storeId: selectedCabinet.clientId
+      });
+
+      if (productsResponse.success) {
+        selectedCabinet.articuls = productsResponse.articuls;
+        selectedCabinet.articulCount = productsResponse.articuls.length;
+        selectedCabinet._articulesLoaded = true;
+        console.log(`✅ [DASHBOARD] Загружено артикулов: ${selectedCabinet.articuls.length}`);
+
+        // Обновляем счётчик в dropdown
+        if (countEl) {
+          const count = selectedCabinet.articuls.length;
+          if (count === 0) countEl.innerHTML = '⚠️ нет артикулов';
+          else if (count === 1) countEl.innerHTML = `📦 ${count} артикул`;
+          else if (count < 5) countEl.innerHTML = `📦 ${count} артикула`;
+          else countEl.innerHTML = `📦 ${count} артикулов`;
+        }
+      } else {
+        console.error("❌ [DASHBOARD] Ошибка загрузки артикулов:", productsResponse.error);
+        showError("Ошибка загрузки артикулов: " + productsResponse.error);
+      }
+    } catch (error) {
+      console.error("❌ [DASHBOARD] Ошибка загрузки артикулов:", error);
+      showError("Ошибка загрузки артикулов: " + error.message);
+    }
+  }
 
   // ============================================
   // ЗАГРУЗКА ДАННЫХ ДЕДУПЛИКАЦИИ

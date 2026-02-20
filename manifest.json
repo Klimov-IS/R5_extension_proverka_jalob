@@ -20,9 +20,11 @@
     "service_worker": "background.js"
   },
   "host_permissions": [
+    "<all_urls>",
     "*://*.wildberries.ru/*",
     "https://www.googleapis.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://rating5.ru/*"
   ],
   "content_scripts": [
     {

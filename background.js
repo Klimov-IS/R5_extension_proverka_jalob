@@ -1,7 +1,7 @@
 // Импортируем модули Google Drive и Sheets (через importScripts для service worker)
 try {
-  importScripts('secrets.js', 'google-drive-auth.js', 'google-drive-api.js', 'google-sheets-api.js');
-  console.log("✅ Google Drive и Sheets модули загружены");
+  importScripts('secrets.js', 'api-client.js', 'google-drive-auth.js', 'google-drive-api.js', 'google-sheets-api.js');
+  console.log("✅ Google Drive, Sheets и API модули загружены");
 } catch (error) {
   console.error("❌ Ошибка загрузки модулей:", error);
 }
@@ -174,7 +174,78 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Получение списка кабинетов из Google Sheets
+  // ============================================
+  // R5 API: Получение магазинов и артикулов
+  // ============================================
+
+  // Получение списка магазинов из API
+  if (msg.action === "getStoresFromAPI") {
+    console.log("📥 [BACKGROUND] Получен запрос getStoresFromAPI");
+
+    (async () => {
+      try {
+        const stores = await r5ApiClient.getStores();
+        console.log("📤 [BACKGROUND] Отправляем список магазинов:", stores.length);
+        sendResponse({ success: true, stores });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getStoresFromAPI:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // Получение активных артикулов магазина из API
+  if (msg.action === "getActiveProducts") {
+    console.log("📥 [BACKGROUND] Получен запрос getActiveProducts для:", msg.storeId);
+    const { storeId } = msg;
+
+    if (!storeId) {
+      sendResponse({ success: false, error: "Не указан ID магазина" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        const data = await r5ApiClient.getActiveProducts(storeId);
+        console.log("📤 [BACKGROUND] Отправляем артикулы:", data.articuls.length);
+        sendResponse({ success: true, products: data.products, articuls: data.articuls });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getActiveProducts:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // Получение маппинга папок Drive из Google Sheets
+  if (msg.action === "getFolderMappings") {
+    console.log("📥 [BACKGROUND] Получен запрос getFolderMappings");
+    const { spreadsheetId } = msg;
+
+    if (!spreadsheetId) {
+      sendResponse({ success: false, error: "Не указан ID таблицы" });
+      return false;
+    }
+
+    (async () => {
+      try {
+        const token = await googleDriveAuth.getToken();
+        const mappings = await googleSheetsAPI.getFolderMappings(token, spreadsheetId);
+        console.log("📤 [BACKGROUND] Отправляем маппинг папок:", mappings.length);
+        sendResponse({ success: true, mappings });
+      } catch (error) {
+        console.error("❌ [BACKGROUND] Ошибка getFolderMappings:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // Получение списка кабинетов из Google Sheets (legacy, для совместимости)
   if (msg.action === "getCabinets") {
     console.log("📥 [BACKGROUND] Получен запрос getCabinets");
     const { spreadsheetId } = msg;
