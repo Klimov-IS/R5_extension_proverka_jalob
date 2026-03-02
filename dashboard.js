@@ -306,7 +306,8 @@ async function selectCabinetFromDropdown(index, cabinetName) {
 
     const response = await chrome.runtime.sendMessage({
       action: "getComplaintsRecords",
-      reportSheetId: REPORT_SHEET_ID
+      reportSheetId: REPORT_SHEET_ID,
+      cabinetName: selectedCabinet.name
     });
 
     if (response && response.success) {

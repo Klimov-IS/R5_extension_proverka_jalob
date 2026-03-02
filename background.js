@@ -299,7 +299,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Получение записей из Complaints для дедупликации (record-based)
   if (msg.action === "getComplaintsRecords") {
     console.log("📥 [BACKGROUND] Получен запрос getComplaintsRecords");
-    const { reportSheetId } = msg;
+    const { reportSheetId, cabinetName } = msg;
 
     if (!reportSheetId) {
       sendResponse({ success: false, error: "Не указан ID таблицы отчетов" });
@@ -310,26 +310,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const token = await googleDriveAuth.getToken();
 
-        // Читаем колонки C-G из листа Complaints
-        // C: Артикул (index 0), D: ID отзыва (1), E: Рейтинг (2), F: Дата отзыва (3), G: Дата подачи (4)
-        console.log(`📊 [BACKGROUND] Читаем колонки C:G из Complaints для дедупликации`);
-        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, "'Жалобы V 2.0'!C:G");
+        // Читаем колонки B-G из листа Complaints
+        // B: Кабинет (index 0), C: Артикул (1), D: ID отзыва (2), E: Рейтинг (3), F: Дата отзыва (4), G: Дата подачи (5)
+        console.log(`📊 [BACKGROUND] Читаем колонки B:G из Complaints для дедупликации (кабинет: ${cabinetName || 'все'})`);
+        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, "'Жалобы V 2.0'!B:G");
 
-        // Строим ключи: "{articul}_{rating}_{complaintDate}"
+        // Строим ключи: "{articul}_{rating}_{complaintDate}", фильтруем по кабинету
         const records = [];
+        let totalRows = 0;
         if (rows.length > 1) {
           for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
-            const articul = (row[0] || '').trim();        // C: Артикул
-            const rating = (row[2] || '').toString().trim(); // E: Рейтинг
-            const complaintDate = (row[4] || '').trim();   // G: Дата подачи жалобы
+            const rowCabinet = (row[0] || '').trim();      // B: Кабинет
+            const articul = (row[1] || '').trim();          // C: Артикул
+            const rating = (row[3] || '').toString().trim(); // E: Рейтинг
+            const complaintDate = (row[5] || '').trim();    // G: Дата подачи жалобы
+
+            totalRows++;
+
+            // Фильтруем по кабинету (если указан)
+            if (cabinetName && rowCabinet !== cabinetName) continue;
+
             if (articul && complaintDate) {
               records.push(`${articul}_${rating}_${complaintDate}`);
             }
           }
         }
 
-        console.log(`📤 [BACKGROUND] Отправляем ${records.length} записей для дедупликации`);
+        console.log(`📤 [BACKGROUND] Отправляем ${records.length} записей для дедупликации (из ${totalRows} всего, кабинет: ${cabinetName || 'все'})`);
         sendResponse({ success: true, records });
       } catch (error) {
         console.error("❌ [BACKGROUND] Ошибка getComplaintsRecords:", error);
