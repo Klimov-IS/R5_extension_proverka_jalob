@@ -1,36 +1,35 @@
 // ============================================
-// КЭШ ДЕДУПЛИКАЦИИ - Простой модуль для работы с chrome.storage
+// КЭШ ДЕДУПЛИКАЦИИ - Модуль проверки дубликатов жалоб
 // ============================================
-// Назначение: Хранение списка существующих скриншотов из Complaints
-// для быстрой проверки дубликатов без сетевых запросов.
-//
-// Архитектура:
-// 1. popup.js загружает данные из Complaints при выборе кабинета
+// Архитектура (v2 — record-based):
+// 1. dashboard.js загружает записи (артикул + рейтинг + дата подачи) из Complaints
 // 2. Сохраняет в chrome.storage.local
-// 3. content.js читает из кэша и проверяет дубликаты мгновенно
+// 3. content.js проверяет дубликаты по ключу (артикул_рейтинг_датаПодачи)
+//
+// Преимущество: не зависит от формата даты отзыва WB (который может меняться)
 // ============================================
 
 const DeduplicationCache = {
-  CACHE_KEY: 'complaints_filenames_cache',
+  RECORDS_KEY: 'complaints_records_cache',
   CACHE_TTL: 30 * 60 * 1000, // 30 минут
 
   // ============================================
-  // Сохранение данных в кэш (используется в popup.js)
+  // Сохранение записей в кэш (используется в dashboard.js)
   // ============================================
-  async save(filenames, cabinetId) {
+  async saveRecords(records, cabinetId) {
     try {
       const cacheData = {
-        filenames: Array.from(new Set(filenames)), // Убираем дубликаты
+        records: Array.from(new Set(records)), // Убираем дубликаты
         cabinetId: cabinetId,
         timestamp: Date.now(),
-        count: filenames.length
+        count: records.length
       };
 
       await chrome.storage.local.set({
-        [this.CACHE_KEY]: cacheData
+        [this.RECORDS_KEY]: cacheData
       });
 
-      console.log(`[Cache] ✅ Сохранено ${cacheData.count} имён файлов для кабинета ${cabinetId}`);
+      console.log(`[Cache] ✅ Сохранено ${cacheData.count} записей для кабинета ${cabinetId}`);
       return true;
     } catch (error) {
       console.error('[Cache] ❌ Ошибка сохранения кэша:', error);
@@ -39,15 +38,15 @@ const DeduplicationCache = {
   },
 
   // ============================================
-  // Загрузка данных из кэша (используется в content.js)
+  // Загрузка записей из кэша (используется в content.js)
   // ============================================
-  async load(cabinetId) {
+  async loadRecords(cabinetId) {
     try {
-      const result = await chrome.storage.local.get(this.CACHE_KEY);
-      const cacheData = result[this.CACHE_KEY];
+      const result = await chrome.storage.local.get(this.RECORDS_KEY);
+      const cacheData = result[this.RECORDS_KEY];
 
       if (!cacheData) {
-        console.log('[Cache] ⚠️ Кэш пуст');
+        console.log('[Cache] ⚠️ Кэш записей пуст');
         return null;
       }
 
@@ -64,8 +63,8 @@ const DeduplicationCache = {
         return null;
       }
 
-      console.log(`[Cache] ✅ Загружено ${cacheData.count} имён файлов (возраст: ${Math.round(age / 1000)}с)`);
-      return new Set(cacheData.filenames);
+      console.log(`[Cache] ✅ Загружено ${cacheData.count} записей (возраст: ${Math.round(age / 1000)}с)`);
+      return new Set(cacheData.records);
     } catch (error) {
       console.error('[Cache] ❌ Ошибка загрузки кэша:', error);
       return null;
@@ -73,127 +72,39 @@ const DeduplicationCache = {
   },
 
   // ============================================
+  // Проверка дубликата по записи (артикул + рейтинг + дата подачи)
+  // ============================================
+  checkDuplicateByRecord(recordsSet, articul, rating, complaintDate) {
+    if (!recordsSet || recordsSet.size === 0) {
+      return false;
+    }
+
+    if (!articul || !complaintDate) {
+      return false;
+    }
+
+    const key = `${articul}_${rating || ''}_${complaintDate}`;
+    const isDuplicate = recordsSet.has(key);
+
+    if (isDuplicate) {
+      console.log(`[Cache] ⏭️ Дубликат найден (запись): ${key}`);
+    }
+
+    return isDuplicate;
+  },
+
+  // ============================================
   // Очистка кэша
   // ============================================
   async clear() {
     try {
-      await chrome.storage.local.remove(this.CACHE_KEY);
+      await chrome.storage.local.remove(this.RECORDS_KEY);
       console.log('[Cache] ✅ Кэш очищен');
       return true;
     } catch (error) {
       console.error('[Cache] ❌ Ошибка очистки кэша:', error);
       return false;
     }
-  },
-
-  // ============================================
-  // Генерация имени файла из данных отзыва
-  // ============================================
-  // Формат: {Артикул}_{DD.MM.YY_HH-mm}.png
-  // Пример: 38726376_12.12.25_20-14.png
-  generateFilename(articul, feedbackDate) {
-    if (!articul || !feedbackDate) {
-      console.warn('[Cache] ⚠️ Недостаточно данных для генерации имени файла');
-      return null;
-    }
-
-    try {
-      // Парсим дату из формата "12 дек. 2025 г. в 20:14"
-      const dateStr = feedbackDate.replace(/\u00A0/g, ' ').trim().toLowerCase();
-
-      // Мапа месяцев
-      const months = {
-        'янв': '01', 'января': '01', 'январь': '01',
-        'фев': '02', 'февраля': '02', 'февраль': '02',
-        'мар': '03', 'марта': '03', 'март': '03',
-        'апр': '04', 'апреля': '04', 'апрель': '04',
-        'май': '05', 'мая': '05',
-        'июн': '06', 'июня': '06', 'июнь': '06',
-        'июл': '07', 'июля': '07', 'июль': '07',
-        'авг': '08', 'августа': '08', 'август': '08',
-        'сен': '09', 'сентября': '09', 'сент': '09', 'сентябрь': '09',
-        'окт': '10', 'октября': '10', 'октябрь': '10',
-        'ноя': '11', 'ноября': '11', 'ноябрь': '11',
-        'дек': '12', 'декабря': '12', 'декабрь': '12',
-      };
-
-      // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
-      const datePattern = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
-      const match = dateStr.match(datePattern);
-
-      // Формат 2: числовой — "31.01.2026 в 16:55"
-      const numericPattern = /(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}):(\d{2})/;
-      const numericMatch = dateStr.match(numericPattern);
-
-      let day, month, shortYear, hour, minute;
-
-      if (match) {
-        let monthName;
-        [, day, monthName, , hour, minute] = match;
-        const year = match[3];
-
-        // Находим месяц
-        month = months[monthName];
-        if (!month) {
-          for (const key in months) {
-            if (monthName.startsWith(key)) {
-              month = months[key];
-              break;
-            }
-          }
-        }
-
-        if (!month) {
-          console.warn('[Cache] ⚠️ Не удалось определить месяц:', monthName);
-          return null;
-        }
-
-        shortYear = String(year).slice(-2);
-      } else if (numericMatch) {
-        [, day, month, , hour, minute] = numericMatch;
-        const year = numericMatch[3];
-        shortYear = String(year).slice(-2);
-      } else {
-        console.warn('[Cache] ⚠️ Не удалось распарсить дату:', feedbackDate);
-        return null;
-      }
-
-      // Нормализуем значения
-      day = day.padStart(2, '0');
-      hour = hour.padStart(2, '0');
-      minute = minute.padStart(2, '0');
-
-      // Итоговое имя файла
-      const filename = `${articul}_${day}.${month}.${shortYear}_${hour}-${minute}.png`;
-
-      return filename;
-    } catch (error) {
-      console.error('[Cache] ❌ Ошибка генерации имени файла:', error);
-      return null;
-    }
-  },
-
-  // ============================================
-  // Проверка существования скриншота
-  // ============================================
-  checkDuplicate(filenamesSet, articul, feedbackDate) {
-    if (!filenamesSet || filenamesSet.size === 0) {
-      console.warn('[Cache] ⚠️ Набор имён файлов пуст');
-      return false;
-    }
-
-    const filename = this.generateFilename(articul, feedbackDate);
-    if (!filename) {
-      return false;
-    }
-
-    const isDuplicate = filenamesSet.has(filename);
-
-    if (isDuplicate) {
-      console.log(`[Cache] ⏭️ Дубликат найден: ${filename}`);
-    }
-
-    return isDuplicate;
   }
 };
 

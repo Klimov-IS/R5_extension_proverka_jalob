@@ -1223,87 +1223,31 @@ async function steppingByElements(art) {
       updateProgress(`Артикул ${art} | Найдено одобренных: ${totalApproved}`);
 
       // ============================================
-      // ПРОВЕРКА ДЕДУПЛИКАЦИИ: Пропускаем если скриншот уже существует
+      // ПРОВЕРКА ДЕДУПЛИКАЦИИ: Пропускаем если запись уже существует
       // ============================================
-      // Важно: Проверяем ДО открытия сайдбара, чтобы сэкономить ~4 секунды.
-      // Парсим дату отзыва прямо из последней колонки таблицы ("Отзыв").
+      // Проверяем ДО открытия сайдбара по ключу (артикул + рейтинг + дата подачи).
+      // Не зависит от формата даты отзыва WB — использует только наши стабильные данные.
       if (window.DeduplicationCache && state.cabinetId) {
         try {
-          // Загружаем кэш имён файлов из chrome.storage.local (один раз на строку)
-          const cachedFilenames = await DeduplicationCache.load(state.cabinetId);
+          const cachedRecords = await DeduplicationCache.loadRecords(state.cabinetId);
 
-          if (cachedFilenames && cachedFilenames.size > 0) {
-            // ============================================
-            // ПАРСИНГ ДАТЫ ИЗ ТАБЛИЦЫ
-            // ============================================
-            let feedbackDateFromTable = null;
-            // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
-            const datePatternText = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
-            // Формат 2: числовой — "31.01.2026 в 16:55"
-            const datePatternNumeric = /(\d{1,2}\.\d{2}\.\d{4}\s*в\s*\d{1,2}:\d{2})/;
+          if (cachedRecords && cachedRecords.size > 0) {
+            const rowRating = parseRatingFromRow(child);
 
-            function matchDateInText(text) {
-              const m = text.match(datePatternText);
-              if (m) return m[1];
-              const m2 = text.match(datePatternNumeric);
-              if (m2) return m2[1];
-              return null;
-            }
+            const isDuplicate = DeduplicationCache.checkDuplicateByRecord(
+              cachedRecords,
+              art,
+              rowRating,
+              dateInText
+            );
 
-            // Стратегия 1: Поиск по классу "Feedback-info-cell" (последняя колонка)
-            const feedbackCell = child.querySelector('[class*="Feedback-info-cell"]');
-            if (feedbackCell) {
-              const spans = feedbackCell.querySelectorAll('span');
-              for (const span of spans) {
-                const found = matchDateInText(span.innerText || '');
-                if (found) {
-                  feedbackDateFromTable = found;
-                  break;
-                }
-              }
-            }
-
-            // Стратегия 2 (Fallback): Поиск в 5-й колонке (children[4])
-            if (!feedbackDateFromTable && child.children[4]) {
-              const spans = child.children[4].querySelectorAll('span');
-              for (const span of spans) {
-                const found = matchDateInText(span.innerText || '');
-                if (found) {
-                  feedbackDateFromTable = found;
-                  break;
-                }
-              }
-            }
-
-            // Стратегия 3 (Fallback): Поиск во всей строке
-            if (!feedbackDateFromTable) {
-              const allText = child.innerText || '';
-              feedbackDateFromTable = matchDateInText(allText);
-            }
-
-            // ============================================
-            // ПРОВЕРКА ДУБЛИКАТА
-            // ============================================
-            if (feedbackDateFromTable) {
-              console.log(`[Deduplication] 📅 Дата из таблицы: ${feedbackDateFromTable}`);
-
-              const isDuplicate = DeduplicationCache.checkDuplicate(
-                cachedFilenames,
-                art,
-                feedbackDateFromTable
-              );
-
-              if (isDuplicate) {
-                console.log(`[Deduplication] ⏭️ Пропускаем дубликат (без сайдбара): ${art}, ${feedbackDateFromTable}`);
-                state.screenshotsSkipped++;
-                state.totalComplaintsFound++; // Считаем как найденную жалобу
-                continue; // ПРОПУСКАЕМ открытие сайдбара - ЭКОНОМИЯ ~4 сек!
-              } else {
-                console.log(`[Deduplication] ✅ Новый скриншот: ${art}, ${feedbackDateFromTable}`);
-              }
+            if (isDuplicate) {
+              console.log(`[Deduplication] ⏭️ Пропускаем дубликат: ${art}_${rowRating}_${dateInText}`);
+              state.screenshotsSkipped++;
+              state.totalComplaintsFound++;
+              continue; // ПРОПУСКАЕМ открытие сайдбара - ЭКОНОМИЯ ~4 сек!
             } else {
-              console.warn(`[Deduplication] ⚠️ Fallback: не удалось извлечь дату из таблицы, открываем сайдбар`);
-              // Продолжаем обычный flow - откроется сайдбар
+              console.log(`[Deduplication] ✅ Новая запись: ${art}_${rowRating}_${dateInText}`);
             }
           }
         } catch (error) {

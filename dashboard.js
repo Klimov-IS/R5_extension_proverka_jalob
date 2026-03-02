@@ -305,13 +305,13 @@ async function selectCabinetFromDropdown(index, cabinetName) {
     console.log('[DASHBOARD] 📋 selectedCabinet.name:', selectedCabinet.name);
 
     const response = await chrome.runtime.sendMessage({
-      action: "getComplaintsFilenames",
+      action: "getComplaintsRecords",
       reportSheetId: REPORT_SHEET_ID
     });
 
     if (response && response.success) {
-      await DeduplicationCache.save(response.filenames, cabinetId);
-      console.log(`[DASHBOARD] ✅ Загружено ${response.filenames.length} существующих скриншотов для дедупликации`);
+      await DeduplicationCache.saveRecords(response.records, cabinetId);
+      console.log(`[DASHBOARD] ✅ Загружено ${response.records.length} записей для дедупликации`);
       console.log(`[DASHBOARD] 💾 Сохранено в кэш с ключом: ${cabinetId}`);
     } else {
       console.warn('[DASHBOARD] ⚠️ Не удалось загрузить данные дедупликации:', response?.error);

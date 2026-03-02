@@ -296,9 +296,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // Асинхронный ответ
   }
 
-  // Получение списка имен файлов из Complaints (для дедупликации)
-  if (msg.action === "getComplaintsFilenames") {
-    console.log("📥 [BACKGROUND] Получен запрос getComplaintsFilenames");
+  // Получение записей из Complaints для дедупликации (record-based)
+  if (msg.action === "getComplaintsRecords") {
+    console.log("📥 [BACKGROUND] Получен запрос getComplaintsRecords");
     const { reportSheetId } = msg;
 
     if (!reportSheetId) {
@@ -310,24 +310,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const token = await googleDriveAuth.getToken();
 
-        // Читаем колонку J (Имя файла) из листа Complaints
-        console.log(`📊 [BACKGROUND] Читаем колонку J (Имя файла) из Complaints (reportSheetId: ${reportSheetId})`);
-        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, "'Жалобы V 2.0'!J:J");
+        // Читаем колонки C-G из листа Complaints
+        // C: Артикул (index 0), D: ID отзыва (1), E: Рейтинг (2), F: Дата отзыва (3), G: Дата подачи (4)
+        console.log(`📊 [BACKGROUND] Читаем колонки C:G из Complaints для дедупликации`);
+        const rows = await googleSheetsAPI.getSheetData(token, reportSheetId, "'Жалобы V 2.0'!C:G");
 
-        // Извлекаем имена файлов (пропускаем заголовок)
-        const filenames = rows.length > 1
-          ? rows.slice(1).map(row => row[0]).filter(Boolean)
-          : [];
+        // Строим ключи: "{articul}_{rating}_{complaintDate}"
+        const records = [];
+        if (rows.length > 1) {
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            const articul = (row[0] || '').trim();        // C: Артикул
+            const rating = (row[2] || '').toString().trim(); // E: Рейтинг
+            const complaintDate = (row[4] || '').trim();   // G: Дата подачи жалобы
+            if (articul && complaintDate) {
+              records.push(`${articul}_${rating}_${complaintDate}`);
+            }
+          }
+        }
 
-        console.log(`📤 [BACKGROUND] Отправляем ${filenames.length} имен файлов для дедупликации`);
-        sendResponse({ success: true, filenames: filenames });
+        console.log(`📤 [BACKGROUND] Отправляем ${records.length} записей для дедупликации`);
+        sendResponse({ success: true, records });
       } catch (error) {
-        console.error("❌ [BACKGROUND] Ошибка getComplaintsFilenames:", error);
+        console.error("❌ [BACKGROUND] Ошибка getComplaintsRecords:", error);
         sendResponse({ success: false, error: error.message });
       }
     })();
 
-    return true; // Асинхронный ответ
+    return true;
   }
 });
 
@@ -669,7 +679,7 @@ function parseDate(lastElement) {
     }
   }
 
-  // Формат 2: числовой — "31.01.2026 в 16:55"
+  // Формат 2: числовой с "в" — "31.01.2026 в 16:55"
   const reNumeric = /(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}):(\d{2})/;
   const matchNumeric = raw.match(reNumeric);
 
@@ -680,10 +690,52 @@ function parseDate(lastElement) {
     minute = minute.padStart(2, "0");
     const shortYear = String(year).slice(-2);
     const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
-    console.log("✅ parseDate успешно (числовой формат):", result);
+    console.log("✅ parseDate успешно (числовой с 'в'):", result);
+    return result;
+  }
+
+  // Формат 3: числовой без "в" — "31.01.2026 16:55" или "31.01.2026, 16:55"
+  const reNumericNoV = /(\d{1,2})\.(\d{2})\.(\d{4})[,\s]+(\d{1,2}):(\d{2})/;
+  const matchNoV = raw.match(reNumericNoV);
+
+  if (matchNoV) {
+    let [, day, month, year, hour, minute] = matchNoV;
+    day = day.padStart(2, "0");
+    hour = hour.padStart(2, "0");
+    minute = minute.padStart(2, "0");
+    const shortYear = String(year).slice(-2);
+    const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
+    console.log("✅ parseDate успешно (числовой без 'в'):", result);
+    return result;
+  }
+
+  // Формат 4: последний шанс — извлекаем DD.MM.YYYY и HH:MM по отдельности
+  const dateOnly = raw.match(/(\d{1,2})\.(\d{2})\.(\d{4})/);
+  const timeOnly = raw.match(/(\d{1,2}):(\d{2})/);
+
+  if (dateOnly && timeOnly) {
+    let [, day, month, year] = dateOnly;
+    let [, hour, minute] = timeOnly;
+    day = day.padStart(2, "0");
+    hour = hour.padStart(2, "0");
+    minute = minute.padStart(2, "0");
+    const shortYear = String(year).slice(-2);
+    const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
+    console.log("✅ parseDate успешно (раздельное извлечение):", result);
+    return result;
+  }
+
+  // Формат 5: только дата без времени — "31.01.2026"
+  if (dateOnly) {
+    let [, day, month, year] = dateOnly;
+    day = day.padStart(2, "0");
+    const shortYear = String(year).slice(-2);
+    const result = `${day}.${month}.${shortYear}`;
+    console.log("✅ parseDate успешно (только дата):", result);
     return result;
   }
 
   console.warn("❌ Не удалось распознать дату:", raw);
+  console.warn("❌ Полный входной текст:", JSON.stringify(lastElement));
   return "unknown_date";
 }
