@@ -69,27 +69,42 @@ function parseReviewDateToISO(dateStr) {
   if (!dateStr) return null;
 
   const raw = dateStr.replace(/\u00A0/g, ' ').trim().toLowerCase();
+
+  // Формат 1: текстовый — "18 февр. 2026 г. в 21:45"
   const re = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
   const match = raw.match(re);
 
-  if (!match) return null;
+  if (match) {
+    let [, day, monthName, year, hour, minute] = match;
+    day = day.padStart(2, '0');
+    hour = hour.padStart(2, '0');
 
-  let [, day, monthName, year, hour, minute] = match;
-  day = day.padStart(2, '0');
-  hour = hour.padStart(2, '0');
-
-  let month = MONTHS_MAP[monthName];
-  if (!month) {
-    for (const key in MONTHS_MAP) {
-      if (monthName.startsWith(key)) {
-        month = MONTHS_MAP[key];
-        break;
+    let month = MONTHS_MAP[monthName];
+    if (!month) {
+      for (const key in MONTHS_MAP) {
+        if (monthName.startsWith(key)) {
+          month = MONTHS_MAP[key];
+          break;
+        }
       }
     }
+
+    if (!month) return null;
+    return `${year}-${month}-${day}T${hour}:${minute}`;
   }
 
-  if (!month) return null;
-  return `${year}-${month}-${day}T${hour}:${minute}`;
+  // Формат 2: числовой — "31.01.2026 в 16:55"
+  const reNumeric = /(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}):(\d{2})/;
+  const matchNumeric = raw.match(reNumeric);
+
+  if (matchNumeric) {
+    let [, day, month, year, hour, minute] = matchNumeric;
+    day = day.padStart(2, '0');
+    hour = hour.padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+  }
+
+  return null;
 }
 
 /**
@@ -124,21 +139,32 @@ function parseRatingFromRow(rowElement) {
  * Возвращает строку вида "18 февр. 2026 г. в 21:45"
  */
 function getReviewDateFromRow(rowElement) {
-  const datePattern = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+  // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
+  const datePatternText = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+  // Формат 2: числовой — "31.01.2026 в 16:55"
+  const datePatternNumeric = /(\d{1,2}\.\d{2}\.\d{4}\s*в\s*\d{1,2}:\d{2})/;
+
+  function matchDate(text) {
+    const m = text.match(datePatternText);
+    if (m) return m[1];
+    const m2 = text.match(datePatternNumeric);
+    if (m2) return m2[1];
+    return null;
+  }
 
   // Стратегия 1: Feedback-info-cell
   const feedbackCell = rowElement.querySelector('[class*="Feedback-info-cell"]');
   if (feedbackCell) {
     const spans = feedbackCell.querySelectorAll('span[data-name="Text"]');
     for (const span of spans) {
-      const match = span.innerText?.match(datePattern);
-      if (match) return match[1];
+      const found = matchDate(span.innerText || '');
+      if (found) return found;
     }
     // Fallback: все span'ы
     const allSpans = feedbackCell.querySelectorAll('span');
     for (const span of allSpans) {
-      const match = span.innerText?.match(datePattern);
-      if (match) return match[1];
+      const found = matchDate(span.innerText || '');
+      if (found) return found;
     }
   }
 
@@ -146,8 +172,8 @@ function getReviewDateFromRow(rowElement) {
   if (rowElement.children[4]) {
     const spans = rowElement.children[4].querySelectorAll('span');
     for (const span of spans) {
-      const match = span.innerText?.match(datePattern);
-      if (match) return match[1];
+      const found = matchDate(span.innerText || '');
+      if (found) return found;
     }
   }
 
@@ -1211,16 +1237,27 @@ async function steppingByElements(art) {
             // ПАРСИНГ ДАТЫ ИЗ ТАБЛИЦЫ
             // ============================================
             let feedbackDateFromTable = null;
-            const datePattern = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+            // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
+            const datePatternText = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+            // Формат 2: числовой — "31.01.2026 в 16:55"
+            const datePatternNumeric = /(\d{1,2}\.\d{2}\.\d{4}\s*в\s*\d{1,2}:\d{2})/;
+
+            function matchDateInText(text) {
+              const m = text.match(datePatternText);
+              if (m) return m[1];
+              const m2 = text.match(datePatternNumeric);
+              if (m2) return m2[1];
+              return null;
+            }
 
             // Стратегия 1: Поиск по классу "Feedback-info-cell" (последняя колонка)
             const feedbackCell = child.querySelector('[class*="Feedback-info-cell"]');
             if (feedbackCell) {
               const spans = feedbackCell.querySelectorAll('span');
               for (const span of spans) {
-                const match = span.innerText?.match(datePattern);
-                if (match) {
-                  feedbackDateFromTable = match[1];
+                const found = matchDateInText(span.innerText || '');
+                if (found) {
+                  feedbackDateFromTable = found;
                   break;
                 }
               }
@@ -1230,9 +1267,9 @@ async function steppingByElements(art) {
             if (!feedbackDateFromTable && child.children[4]) {
               const spans = child.children[4].querySelectorAll('span');
               for (const span of spans) {
-                const match = span.innerText?.match(datePattern);
-                if (match) {
-                  feedbackDateFromTable = match[1];
+                const found = matchDateInText(span.innerText || '');
+                if (found) {
+                  feedbackDateFromTable = found;
                   break;
                 }
               }
@@ -1241,10 +1278,7 @@ async function steppingByElements(art) {
             // Стратегия 3 (Fallback): Поиск во всей строке
             if (!feedbackDateFromTable) {
               const allText = child.innerText || '';
-              const match = allText.match(datePattern);
-              if (match) {
-                feedbackDateFromTable = match[1];
-              }
+              feedbackDateFromTable = matchDateInText(allText);
             }
 
             // ============================================
@@ -1325,10 +1359,13 @@ async function steppingByElements(art) {
         if (feedbackInfo) {
           console.log("📋 Содержимое feedbackInfo:", feedbackInfo.innerText);
 
-          // Ищем дату в формате "XX месяц YYYY г. в HH:MM" во всём тексте
+          // Ищем дату во всём тексте (два формата)
           const fullText = feedbackInfo.innerText || '';
-          const datePattern = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
-          const dateMatch = fullText.match(datePattern);
+          // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
+          const datePatternTextSidebar = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+          // Формат 2: числовой — "31.01.2026 в 16:55"
+          const datePatternNumSidebar = /(\d{1,2}\.\d{2}\.\d{4}\s*в\s*\d{1,2}:\d{2})/;
+          const dateMatch = fullText.match(datePatternTextSidebar) || fullText.match(datePatternNumSidebar);
 
           if (dateMatch) {
             feedbackDate = dateMatch[1];
@@ -1396,9 +1433,10 @@ async function steppingByElements(art) {
         console.warn("⚠️ feedbackDate пуст, пробуем извлечь из текста строки таблицы");
         console.log("📋 Текст из строки таблицы:", text);
 
-        // Пытаемся найти дату в тексте строки таблицы
-        const datePattern = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
-        const dateMatch = text.match(datePattern);
+        // Пытаемся найти дату в тексте строки таблицы (два формата)
+        const datePatternTextFallback = /(\d{1,2}\s+(?:янв|фев|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)[а-я]*\.?\s+\d{4}\s*г\.?\s*в\s*\d{1,2}:\d{2})/i;
+        const datePatternNumFallback = /(\d{1,2}\.\d{2}\.\d{4}\s*в\s*\d{1,2}:\d{2})/;
+        const dateMatch = text.match(datePatternTextFallback) || text.match(datePatternNumFallback);
         if (dateMatch) {
           feedbackDate = dateMatch[1];
           console.log("✅ Дата извлечена из строки таблицы:", feedbackDate);

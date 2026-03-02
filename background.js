@@ -522,13 +522,16 @@ async function handleSaveScreenshot(msg) {
         const checkDate = new Date().toLocaleDateString('ru-RU'); // Текущая дата проверки
         const driveLink = `https://drive.google.com/file/d/${fileId}/view`; // Ссылка на файл
 
+        // Нормализуем дату отзыва в текстовый формат ("31.01.2026 в 16:55" → "31 янв. 2026 г. в 16:55")
+        const normalizedFeedbackDate = normalizeFeedbackDate(feedbackDate) || '';
+
         const complaintsValues = [
           checkDate,                    // A: Дата проверки
           cabinetName || '',            // B: Кабинет
           articul,                      // C: Артикул
           '',                           // D: ID отзыва (пока неизвестен, оставляем пустым)
           feedbackRating || '',         // E: Рейтинг отзыва
-          feedbackDate || '',           // F: Дата отзыва
+          normalizedFeedbackDate,       // F: Дата отзыва (всегда текстовый формат)
           complaintSubmitDate || '',    // G: Дата подачи жалобы (DD.MM формат)
           'Одобрена',                   // H: Статус
           'Да',                         // I: Скриншот (да/нет)
@@ -551,7 +554,7 @@ async function handleSaveScreenshot(msg) {
               articul,
               reviewId: '',
               feedbackRating: feedbackRating || '',
-              feedbackDate: feedbackDate || '',
+              feedbackDate: normalizedFeedbackDate,
               complaintSubmitDate: complaintSubmitDate || '',
               status: 'Одобрена',
               hasScreenshot: true,
@@ -578,6 +581,35 @@ async function handleSaveScreenshot(msg) {
   }
 
   return { skipped: fileAlreadyExists, fileId, fileName, complaintsStatus, complaintsError };
+}
+
+// ============================================
+// НОРМАЛИЗАЦИЯ ДАТЫ В ТЕКСТОВЫЙ ФОРМАТ
+// ============================================
+// "31.01.2026 в 16:55" → "31 янв. 2026 г. в 16:55"
+// "19 февр. 2026 г. в 20:11" → без изменений
+function normalizeFeedbackDate(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return dateStr;
+
+  const raw = dateStr.replace(/\u00A0/g, ' ').trim();
+
+  // Проверяем, числовой ли формат: DD.MM.YYYY в HH:MM
+  const numericRe = /^(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}:\d{2})$/;
+  const match = raw.match(numericRe);
+  if (!match) return dateStr; // Уже в текстовом формате или неизвестный — возвращаем как есть
+
+  const [, day, month, year, time] = match;
+
+  const monthNames = {
+    '01': 'янв.', '02': 'февр.', '03': 'мар.', '04': 'апр.',
+    '05': 'мая', '06': 'июн.', '07': 'июл.', '08': 'авг.',
+    '09': 'сент.', '10': 'окт.', '11': 'нояб.', '12': 'дек.'
+  };
+
+  const monthName = monthNames[month];
+  if (!monthName) return dateStr;
+
+  return `${parseInt(day)} ${monthName} ${year} г. в ${time}`;
 }
 
 // ============================================
@@ -609,6 +641,7 @@ function parseDate(lastElement) {
     дек: "12", декабря: "12", декабрь: "12",
   };
 
+  // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
   const re = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
   const match = raw.match(re);
 
@@ -631,9 +664,24 @@ function parseDate(lastElement) {
     if (month) {
       const shortYear = String(year).slice(-2);
       const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
-      console.log("✅ parseDate успешно:", result);
+      console.log("✅ parseDate успешно (текстовый формат):", result);
       return result;
     }
+  }
+
+  // Формат 2: числовой — "31.01.2026 в 16:55"
+  const reNumeric = /(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}):(\d{2})/;
+  const matchNumeric = raw.match(reNumeric);
+
+  if (matchNumeric) {
+    let [, day, month, year, hour, minute] = matchNumeric;
+    day = day.padStart(2, "0");
+    hour = hour.padStart(2, "0");
+    minute = minute.padStart(2, "0");
+    const shortYear = String(year).slice(-2);
+    const result = `${day}.${month}.${shortYear}_${hour}-${minute}`;
+    console.log("✅ parseDate успешно (числовой формат):", result);
+    return result;
   }
 
   console.warn("❌ Не удалось распознать дату:", raw);

@@ -117,41 +117,51 @@ const DeduplicationCache = {
         'дек': '12', 'декабря': '12', 'декабрь': '12',
       };
 
-      // Regex для парсинга даты
+      // Формат 1: текстовый — "19 февр. 2026 г. в 20:11"
       const datePattern = /(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})\s*(?:г\.?)?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i;
       const match = dateStr.match(datePattern);
 
-      if (!match) {
+      // Формат 2: числовой — "31.01.2026 в 16:55"
+      const numericPattern = /(\d{1,2})\.(\d{2})\.(\d{4})\s*в\s*(\d{1,2}):(\d{2})/;
+      const numericMatch = dateStr.match(numericPattern);
+
+      let day, month, shortYear, hour, minute;
+
+      if (match) {
+        let monthName;
+        [, day, monthName, , hour, minute] = match;
+        const year = match[3];
+
+        // Находим месяц
+        month = months[monthName];
+        if (!month) {
+          for (const key in months) {
+            if (monthName.startsWith(key)) {
+              month = months[key];
+              break;
+            }
+          }
+        }
+
+        if (!month) {
+          console.warn('[Cache] ⚠️ Не удалось определить месяц:', monthName);
+          return null;
+        }
+
+        shortYear = String(year).slice(-2);
+      } else if (numericMatch) {
+        [, day, month, , hour, minute] = numericMatch;
+        const year = numericMatch[3];
+        shortYear = String(year).slice(-2);
+      } else {
         console.warn('[Cache] ⚠️ Не удалось распарсить дату:', feedbackDate);
         return null;
       }
-
-      let [, day, monthName, year, hour, minute] = match;
 
       // Нормализуем значения
       day = day.padStart(2, '0');
       hour = hour.padStart(2, '0');
       minute = minute.padStart(2, '0');
-
-      // Находим месяц
-      let month = months[monthName];
-      if (!month) {
-        // Пробуем найти по префиксу
-        for (const key in months) {
-          if (monthName.startsWith(key)) {
-            month = months[key];
-            break;
-          }
-        }
-      }
-
-      if (!month) {
-        console.warn('[Cache] ⚠️ Не удалось определить месяц:', monthName);
-        return null;
-      }
-
-      // Формат года: последние 2 цифры
-      const shortYear = String(year).slice(-2);
 
       // Итоговое имя файла
       const filename = `${articul}_${day}.${month}.${shortYear}_${hour}-${minute}.png`;
